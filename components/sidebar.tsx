@@ -313,19 +313,19 @@ export function Sidebar({
                             isDark
                               ? "text-white hover:bg-transparent"
                               : "text-gray-700 hover:bg-transparent"
-                          }`}
-                          onClick={() => handleChatClick(chat)}
-                        >
+                    }`}
+                    onClick={() => handleChatClick(chat)}
+                  >
                           <MessageSquare size={16} className="shrink-0" />
                           <div className="flex flex-col items-start min-w-0 flex-1 overflow-hidden">
                             <span className="text-sm font-medium w-full text-left leading-tight truncate block">
-                              {chat.title}
-                            </span>
+                        {chat.title}
+                      </span>
                             <span className="text-xs text-gray-500 dark:text-gray-400 w-full text-left leading-tight truncate block">
-                              {chat.lastMessage}
-                            </span>
-                          </div>
-                        </Button>
+                        {chat.lastMessage}
+                      </span>
+                    </div>
+                  </Button>
 
                         {/* 편집/삭제 드롭다운 - 호버 시에만 표시되도록 개선 */}
                         <div className="absolute top-1/2 right-2 transform -translate-y-1/2 shrink-0">
@@ -455,23 +455,23 @@ export function Sidebar({
                     className="relative group"
                   >
                     <Button
-                      variant="ghost"
-                      size="icon"
+                    variant="ghost"
+                    size="icon"
                       className={`h-9 w-9 ${
-                        isDark
-                          ? "text-white hover:bg-zinc-800"
-                          : "text-gray-700 hover:bg-gray-200"
-                      }`}
-                      onClick={() => handleChatClick(chat)}
-                    >
-                      <MessageSquare size={16} />
-                      <span className="sr-only">{chat.title}</span>
+                      isDark
+                        ? "text-white hover:bg-zinc-800"
+                        : "text-gray-700 hover:bg-gray-200"
+                    }`}
+                    onClick={() => handleChatClick(chat)}
+                  >
+                    <MessageSquare size={16} />
+                    <span className="sr-only">{chat.title}</span>
                     </Button>
                     
                     {/* 호버 툴팁 - 더 나은 스타일링 */}
                     <div className="absolute left-full ml-2 px-3 py-2 bg-gray-900 dark:bg-gray-700 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200 z-50 pointer-events-none w-64 max-w-xs">
                       <div className="font-medium text-white mb-1 truncate">
-                        {chat.title}
+                      {chat.title}
                       </div>
                       <div className="text-xs text-gray-300 truncate">
                         {chat.lastMessage}

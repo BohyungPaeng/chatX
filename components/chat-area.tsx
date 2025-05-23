@@ -567,8 +567,8 @@ export function ChatArea({
   useEffect(() => {
     // chatId가 변경되었고, 메시지가 없는 경우에만 초기 인사말 표시
     if (messages.length === 0 && chatId > 1) { // chatId > 1은 새 채팅 시작을 의미
-      const interval = showInitialGreeting();
-      return () => clearInterval(interval);
+    const interval = showInitialGreeting();
+    return () => clearInterval(interval);
     }
   }, [chatId]); // showInitialGreeting 의존성 제거
 
