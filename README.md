@@ -176,10 +176,6 @@ model_mapping = {
 - **API 문서**: http://localhost:8000/docs
 - **OpenAI 문서**: https://platform.openai.com/docs
 
-## 📄 라이선스
-
-이 프로젝트는 MIT 라이선스 하에 있습니다.
-
 ---
 
 **Developed with ❤️ by Assurance-Digital Team** 
