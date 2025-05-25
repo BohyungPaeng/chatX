@@ -407,6 +407,177 @@ async def analyze_uploaded_image(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from .models import FileAnalysisResponse, ProcessedFileInfo, FileUploadMetadata
+from .services import process_uploaded_file, detect_file_type, validate_file_size
+import time
+from typing import Optional
+
+@router.post("/upload-file", response_model=FileAnalysisResponse)
+async def analyze_uploaded_file(
+    file: UploadFile = File(...),
+    prompt: str = Form("이 파일에 대해 자세히 설명해주세요."),
+    model: str = Form("gpt-4.1"),
+    max_tokens: int = Form(1000),
+    stream: bool = Form(False)
+):
+    """
+    파일(이미지/PDF)을 업로드하고 AI 분석을 수행합니다.
+    
+    Args:
+        file: 업로드된 파일 (이미지 또는 PDF)
+        prompt: 분석을 위한 프롬프트
+        model: 사용할 AI 모델
+        max_tokens: 최대 토큰 수
+        stream: 스트리밍 응답 여부
+    
+    Returns:
+        FileAnalysisResponse: 파일 분석 결과
+    """
+    start_time = time.time()
+    
+    try:
+        print(f"Processing file: {file.filename}, content-type: {file.content_type}")
+        
+        # 파일 타입 감지
+        file_type = detect_file_type(file)
+        if file_type == "unknown":
+            raise HTTPException(
+                status_code=400,
+                detail="지원되지 않는 파일 형식입니다. 이미지(JPEG, PNG, GIF, WEBP) 또는 PDF 파일만 지원합니다."
+            )
+        
+        # 파일 크기 검증
+        await validate_file_size(file, max_size_mb=25)
+        
+        # 파일 분석 수행
+        result = await process_uploaded_file(
+            file=file,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            stream=stream
+        )
+        
+        processing_time = int((time.time() - start_time) * 1000)
+        print(f"File processing completed in {processing_time}ms")
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in analyze_uploaded_file: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/file-info")
+async def get_file_info(file: UploadFile = File(...)) -> FileUploadMetadata:
+    """
+    업로드된 파일의 메타데이터를 반환합니다.
+    
+    Args:
+        file: 업로드된 파일
+    
+    Returns:
+        FileUploadMetadata: 파일 메타데이터
+    """
+    try:
+        # 파일 크기 계산
+        file.file.seek(0, 2)  # 파일 끝으로 이동
+        file_size = file.file.tell()  # 현재 위치 = 파일 크기
+        file.file.seek(0)  # 파일 시작으로 되돌리기
+        
+        # 파일 타입 감지
+        file_type = detect_file_type(file)
+        
+        return FileUploadMetadata(
+            filename=file.filename or "unknown",
+            content_type=file.content_type or "unknown",
+            file_size=file_size,
+            file_type=file_type
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"파일 정보 처리 중 오류가 발생했습니다: {str(e)}"
+        )
+
+@router.post("/validate-file")
+async def validate_file(file: UploadFile = File(...)) -> dict:
+    """
+    파일 유효성을 검증합니다.
+    
+    Args:
+        file: 업로드된 파일
+    
+    Returns:
+        dict: 검증 결과
+    """
+    try:
+        # 파일 타입 검증
+        file_type = detect_file_type(file)
+        if file_type == "unknown":
+            return {
+                "valid": False,
+                "error": "지원되지 않는 파일 형식입니다.",
+                "supported_types": ["이미지 (JPEG, PNG, GIF, WEBP)", "PDF"]
+            }
+        
+        # 파일 크기 검증
+        try:
+            await validate_file_size(file, max_size_mb=25)
+        except HTTPException as e:
+            return {
+                "valid": False,
+                "error": e.detail,
+                "max_size": "25MB"
+            }
+        
+        return {
+            "valid": True,
+            "file_type": file_type,
+            "message": "파일이 유효합니다."
+        }
+        
+    except Exception as e:
+        return {
+            "valid": False,
+            "error": f"파일 검증 중 오류가 발생했습니다: {str(e)}"
+        }
+
+@router.get("/supported-file-types")
+async def get_supported_file_types() -> dict:
+    """
+    지원되는 파일 타입 목록을 반환합니다.
+    
+    Returns:
+        dict: 지원되는 파일 타입 정보
+    """
+    return {
+        "supported_types": {
+            "images": {
+                "mime_types": ["image/jpeg", "image/png", "image/gif", "image/webp"],
+                "extensions": [".jpg", ".jpeg", ".png", ".gif", ".webp"],
+                "description": "이미지 파일"
+            },
+            "documents": {
+                "mime_types": ["application/pdf"],
+                "extensions": [".pdf"],
+                "description": "PDF 문서"
+            }
+        },
+        "limits": {
+            "max_file_size": "25MB",
+            "max_files_per_request": 1
+        },
+        "features": {
+            "pdf_preview": "PDF 첫 페이지 이미지 변환",
+            "image_optimization": "자동 이미지 크기 최적화",
+            "streaming_analysis": "실시간 분석 결과 스트리밍"
+        }
+    }
+
 @router.get("/models")
 async def get_available_models():
     """

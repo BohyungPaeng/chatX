@@ -25,3 +25,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+misc/*
+api/app/__pycache__/*
+*.cpython-312.pyc
+api/app/__pycache__/models.cpython-312.pyc

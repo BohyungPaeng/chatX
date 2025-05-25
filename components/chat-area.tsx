@@ -14,6 +14,7 @@ import {
   PlusCircle,
   Search,
   Globe,
+  FileText, // PDF 아이콘 추가
 } from "lucide-react";
 import { ChatMessage } from "@/components/chat-message";
 import { useMobile } from "@/hooks/use-mobile";
@@ -63,8 +64,15 @@ interface ChatHistory {
   timestamp: Date;
 }
 
-// API URL 설정
-const API_URL = "http://localhost:8001/api";
+// 🔧 개선: 파일 상태 인터페이스 추가
+interface FileUploadState {
+  isUploading: boolean;
+  error: string | null;
+  uploadedUrl: string | null;
+}
+
+// API URL 설정 - 🔧 수정: 8000번 포트로 변경
+const API_URL = "http://localhost:8000/api";
 
 // 파일을 base64로 변환하는 유틸리티 함수
 const fileToBase64 = (file: File): Promise<string> => {
@@ -115,9 +123,15 @@ export function ChatArea({
   const [chatHistory, setChatHistory] = useState<ChatHistory[]>([]);
   const [currentChatId, setCurrentChatId] = useState<number>(1);
 
-  // 이미지 업로드 관련 상태 추가
+  // 🔧 개선: 파일 상태 통합
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [fileUploadState, setFileUploadState] = useState<FileUploadState>({
+    isUploading: false,
+    error: null,
+    uploadedUrl: null
+  });
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   // 입력창 참조 추가
   const inputRef = useRef<HTMLInputElement>(null);
@@ -314,16 +328,16 @@ export function ChatArea({
     return !!attachedImage;
   };
 
-  // 파일 선택 핸들러 추가
+  // 🔧 개선: 파일 선택 핸들러 (PDF 지원 추가, 검증 단순화)
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
 
     if (file) {
-      // 파일 타입 검증
-      const validTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+      // 🔧 개선: PDF 지원 추가
+      const validTypes = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
       if (!validTypes.includes(file.type)) {
         setError(
-          "지원되지 않는 이미지 형식입니다. JPEG, PNG, GIF 또는 WEBP 형식만 지원합니다."
+          "지원되지 않는 파일 형식입니다. 이미지(JPEG, PNG, GIF, WEBP) 또는 PDF 파일만 지원합니다."
         );
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
@@ -331,10 +345,10 @@ export function ChatArea({
         return;
       }
 
-      // 파일 크기 검증 (20MB 제한)
-      const maxSize = 20 * 1024 * 1024; // 20MB
+      // 파일 크기 검증 (25MB 제한) - 🔧 개선: 제한 완화
+      const maxSize = 25 * 1024 * 1024; // 25MB
       if (file.size > maxSize) {
-        setError("이미지 크기가 너무 큽니다. 최대 20MB까지 지원합니다.");
+        setError("파일 크기가 너무 큽니다. 최대 25MB까지 지원합니다.");
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
@@ -351,7 +365,13 @@ export function ChatArea({
       setSelectedFile(file);
       setError(null);
 
-      // 이미지 미리보기 생성
+      // 🔧 개선: PDF는 미리보기 생성하지 않음
+      if (file.type === "application/pdf") {
+        setPreviewUrl(null);
+        return;
+      }
+
+      // 이미지만 미리보기 생성
       const reader = new FileReader();
       reader.onloadend = () => {
         setPreviewUrl(reader.result as string);
@@ -379,22 +399,28 @@ export function ChatArea({
 
       // 1. 선택된 파일이 있는 경우
       if (selectedFile) {
-        // 파일 형식 재확인
+        // 🔧 개선: PDF 지원 확인
         const validTypes = [
           "image/jpeg",
           "image/png",
           "image/gif",
           "image/webp",
+          "application/pdf"
         ];
         if (!validTypes.includes(selectedFile.type)) {
           throw new Error(
-            "지원되지 않는 이미지 형식입니다. JPEG, PNG, GIF 또는 WEBP 형식만 지원합니다."
+            "지원되지 않는 파일 형식입니다. 이미지 또는 PDF 파일만 지원합니다."
           );
         }
 
         imageFile = selectedFile;
         try {
-          imageData = await fileToBase64(selectedFile);
+          if (selectedFile.type === "application/pdf") {
+            // PDF는 base64 변환하지 않고 파일 그대로 사용
+            imageData = null;
+          } else {
+            imageData = await fileToBase64(selectedFile);
+          }
           console.log(
             `Debug - Selected file: ${selectedFile.name}, type: ${
               selectedFile.type
@@ -402,7 +428,7 @@ export function ChatArea({
           );
         } catch (e) {
           console.error("File to base64 conversion error:", e);
-          throw new Error("이미지 변환 중 오류가 발생했습니다.");
+          throw new Error("파일 변환 중 오류가 발생했습니다.");
         }
       }
       // 2. 미리보기 URL만 있는 경우
@@ -422,41 +448,21 @@ export function ChatArea({
         }
       }
 
-      // 이미지가 없으면 에러
-      if (!imageData) {
-        throw new Error("분석할 이미지를 찾을 수 없습니다");
+      // 파일이 없으면 에러
+      if (!selectedFile) {
+        throw new Error("분석할 파일을 찾을 수 없습니다");
       }
 
-      // 이미지 형식 확인
-      if (!imageData.startsWith("data:image/")) {
-        throw new Error(
-          "이미지 형식이 올바르지 않습니다. data:image/ 형식이어야 합니다."
-        );
-      }
-
-      // 이미지 형식 확인
-      const imageFormat = imageData.split(";")[0].split(":")[1].toLowerCase();
-      console.log(`Debug - Image format: ${imageFormat}`);
-
-      // 지원되는 형식인지 확인
-      const supportedFormats = [
-        "image/jpeg",
-        "image/png",
-        "image/gif",
-        "image/webp",
-      ];
-      if (!supportedFormats.includes(imageFormat)) {
-        console.warn(
-          `Warning - Image format ${imageFormat} may not be supported`
-        );
-      }
+      // 🔧 개선: PDF와 이미지 구분 처리
+      const isPdf = selectedFile.type === "application/pdf";
+      const fileTypeName = isPdf ? "PDF 문서" : "이미지";
 
       // 사용자 메시지 생성
       const userMessage: Message = {
         id: messages.length + 1,
         role: "user",
-        content: input || "이 이미지를 분석해주세요.",
-        imageUrl: imageData,
+        content: input || `이 ${fileTypeName}를 분석해주세요.`,
+        imageUrl: isPdf ? undefined : imageData, // PDF는 이미지 URL 없음
       };
 
       // 메시지 목록에 사용자 메시지 추가
@@ -477,7 +483,7 @@ export function ChatArea({
       const formData = new FormData();
       formData.append(
         "prompt",
-        input || "이 이미지에 대해 자세히 설명해주세요."
+        input || `이 ${fileTypeName}에 대해 자세히 설명해주세요.`
       );
       formData.append("model", selectedModel.id);
       formData.append("max_tokens", "1000");
@@ -496,11 +502,11 @@ export function ChatArea({
         JSON.stringify(conversationHistory)
       );
 
-      // 이미지 추가: 파일이 있으면 파일로, 없으면 base64 문자열로
+      // 파일 추가
       if (imageFile) {
         console.log("Uploading as file:", imageFile.name, imageFile.type);
         formData.append("file", imageFile);
-      } else {
+      } else if (imageData) {
         console.log("Uploading as base64 image");
         formData.append("base64_image", imageData);
       }
@@ -526,7 +532,7 @@ export function ChatArea({
         clearTimeout(timeoutId); // 타임아웃 해제
 
         if (!response.ok) {
-          let errorMessage = "이미지 분석 중 오류가 발생했습니다.";
+          let errorMessage = "파일 분석 중 오류가 발생했습니다.";
           try {
             const errorData = await response.json();
             console.error("API error response:", errorData);
@@ -616,18 +622,18 @@ export function ChatArea({
         fileInputRef.current.value = "";
       }
     } catch (err) {
-      console.error("이미지 분석 오류:", err);
+      console.error("파일 분석 오류:", err);
       setError(
         err instanceof Error
           ? err.message
-          : "이미지 분석 중 오류가 발생했습니다"
+          : "파일 분석 중 오류가 발생했습니다"
       );
       setIsStreaming(false);
     } finally {
       setIsLoading(false);
     }
   };
-
+  
   // 메시지 전송 함수 수정 - 웹 검색 지원 추가
   const sendMessage = async () => {
     // 입력 없고 이미지도 없으면 아무 것도 하지 않음
