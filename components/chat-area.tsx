@@ -14,7 +14,7 @@ import {
   PlusCircle,
   Search,
   Globe,
-  FileText, // PDF 아이콘 추가
+  FileText,
 } from "lucide-react";
 import { ChatMessage } from "@/components/chat-message";
 import { useMobile } from "@/hooks/use-mobile";
@@ -133,6 +133,7 @@ export function ChatArea({
   });
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
   // 입력창 참조 추가
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -328,12 +329,12 @@ export function ChatArea({
     return !!attachedImage;
   };
 
-  // 🔧 개선: 파일 선택 핸들러 (PDF 지원 추가, 검증 단순화)
+  // 파일 선택 핸들러 (PDF 지원 추가)
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
 
     if (file) {
-      // 🔧 개선: PDF 지원 추가
+      // PDF 지원 추가
       const validTypes = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
       if (!validTypes.includes(file.type)) {
         setError(
@@ -342,15 +343,22 @@ export function ChatArea({
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
+        if (pdfInputRef.current) {
+          pdfInputRef.current.value = "";
+        }
         return;
       }
 
-      // 파일 크기 검증 (25MB 제한) - 🔧 개선: 제한 완화
-      const maxSize = 25 * 1024 * 1024; // 25MB
+      // 파일 크기 검증 - 이미지는 25MB, PDF는 50MB 제한
+      const maxSize = file.type === "application/pdf" ? 50 * 1024 * 1024 : 25 * 1024 * 1024;
       if (file.size > maxSize) {
-        setError("파일 크기가 너무 큽니다. 최대 25MB까지 지원합니다.");
+        const limitMB = file.type === "application/pdf" ? "50MB" : "25MB";
+        setError(`파일 크기가 너무 큽니다. ${file.type === "application/pdf" ? "PDF는" : "이미지는"} 최대 ${limitMB}까지 지원합니다.`);
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
+        }
+        if (pdfInputRef.current) {
+          pdfInputRef.current.value = "";
         }
         return;
       }
@@ -365,7 +373,7 @@ export function ChatArea({
       setSelectedFile(file);
       setError(null);
 
-      // 🔧 개선: PDF는 미리보기 생성하지 않음
+      // PDF는 미리보기 생성하지 않음
       if (file.type === "application/pdf") {
         setPreviewUrl(null);
         return;
@@ -381,6 +389,9 @@ export function ChatArea({
         setSelectedFile(null);
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
+        }
+        if (pdfInputRef.current) {
+          pdfInputRef.current.value = "";
         }
       };
       reader.readAsDataURL(file);
@@ -399,7 +410,7 @@ export function ChatArea({
 
       // 1. 선택된 파일이 있는 경우
       if (selectedFile) {
-        // 🔧 개선: PDF 지원 확인
+        // PDF 지원 확인
         const validTypes = [
           "image/jpeg",
           "image/png",
@@ -453,7 +464,7 @@ export function ChatArea({
         throw new Error("분석할 파일을 찾을 수 없습니다");
       }
 
-      // 🔧 개선: PDF와 이미지 구분 처리
+      // PDF와 이미지 구분 처리
       const isPdf = selectedFile.type === "application/pdf";
       const fileTypeName = isPdf ? "PDF 문서" : "이미지";
 
@@ -620,6 +631,9 @@ export function ChatArea({
       setPreviewUrl(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
+      }
+      if (pdfInputRef.current) {
+        pdfInputRef.current.value = "";
       }
     } catch (err) {
       console.error("파일 분석 오류:", err);
@@ -952,12 +966,20 @@ export function ChatArea({
     fileInputRef.current?.click();
   };
 
+  // PDF 선택 버튼 클릭 핸들러
+  const handlePdfSelectClick = () => {
+    pdfInputRef.current?.click();
+  };
+
   // 파일 제거 핸들러
   const handleRemoveFile = () => {
     setSelectedFile(null);
     setPreviewUrl(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+    if (pdfInputRef.current) {
+      pdfInputRef.current.value = "";
     }
   };
 
@@ -1046,6 +1068,9 @@ export function ChatArea({
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+    if (pdfInputRef.current) {
+      pdfInputRef.current.value = "";
     }
 
     // 포커스 설정
@@ -1282,6 +1307,13 @@ export function ChatArea({
             accept="image/jpeg,image/png,image/webp,image/gif"
             className="hidden"
           />
+          <input
+            type="file"
+            ref={pdfInputRef}
+            onChange={handleFileChange}
+            accept="application/pdf,.pdf"
+            className="hidden"
+          />
           <div className="group relative">
             <Button
               type="button"
@@ -1296,7 +1328,25 @@ export function ChatArea({
               <span className="sr-only">Upload Image</span>
             </Button>
             <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 p-2 bg-black text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50">
-              이미지 업로드 (최대 20MB)
+              이미지 업로드 (최대 25MB)
+            </div>
+          </div>
+
+          <div className="group relative">
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              onClick={handlePdfSelectClick}
+              disabled={isLoading || isSearchMode}
+              className="border-gray-200 dark:border-secondary hover:bg-gray-100 dark:hover:bg-secondary/80"
+              title="PDF 업로드"
+            >
+              <FileText size={18} />
+              <span className="sr-only">Upload PDF</span>
+            </Button>
+            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 p-2 bg-black text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50">
+              PDF 업로드 (최대 50MB)
             </div>
           </div>
 
@@ -1346,7 +1396,9 @@ export function ChatArea({
               webSearchEnabled
                 ? "웹 검색어를 입력하세요..."
                 : selectedFile
-                ? "이미지에 대한 질문을 입력하세요..."
+                ? selectedFile.type === "application/pdf"
+                  ? "PDF에 대한 질문을 입력하세요..."
+                  : "이미지에 대한 질문을 입력하세요..."
                 : "Type your message..."
             }
             className="flex-1 border-gray-200 dark:bg-secondary dark:border-secondary focus-visible:ring-orange-500 focus-visible:border-orange-500"
@@ -1385,7 +1437,7 @@ export function ChatArea({
         </div>
         {selectedFile && (
           <p className="text-xs text-center text-gray-500 dark:text-muted-foreground mt-2">
-            선택된 이미지: {selectedFile.name} (
+            선택된 {selectedFile.type === "application/pdf" ? "PDF" : "이미지"}: {selectedFile.name} (
             {(selectedFile.size / (1024 * 1024)).toFixed(2)}MB)
           </p>
         )}

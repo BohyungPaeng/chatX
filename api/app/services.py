@@ -44,16 +44,21 @@ def detect_file_type(file: UploadFile) -> str:
 def convert_pdf_page_to_base64(pdf_content: bytes) -> str:
     """
     PDF 바이트를 첫 페이지 이미지로 변환하여 base64 반환
-    기존 참고 코드 스타일 유지
+    50MB까지 지원하도록 개선
     """
     try:
+        # PDF 크기 체크 (50MB 제한)
+        pdf_size_mb = len(pdf_content) / (1024 * 1024)
+        if pdf_size_mb > 50:
+            raise ValueError(f"PDF 파일이 너무 큽니다. 크기: {pdf_size_mb:.2f}MB (최대 50MB)")
+            
         # PDF 문서 열기
         doc = fitz.open(stream=pdf_content, filetype="pdf")
         
         if len(doc) == 0:
             raise ValueError("PDF 파일이 비어있습니다.")
             
-        # 단일 페이지 PDF이므로 첫 번째 페이지를 가져옴
+        # 첫 번째 페이지를 가져옴
         page = doc[0]
         # 300 DPI 변환을 위한 매트릭스 생성 (기본 72 DPI 기준 스케일링)
         matrix = fitz.Matrix(300/72, 300/72)
@@ -65,6 +70,7 @@ def convert_pdf_page_to_base64(pdf_content: bytes) -> str:
         base64_image = base64.b64encode(img_bytes).decode('utf-8')
         doc.close()
         
+        print(f"PDF 변환 완료: {pdf_size_mb:.2f}MB -> 이미지 변환됨")
         return f"data:image/png;base64,{base64_image}"
         
     except Exception as e:
