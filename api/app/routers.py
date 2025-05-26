@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File, Form
 from .models import ChatRequest, ChatResponse, ChatMessage, ImageAnalysisRequest, ImageAnalysisResponse, WebSearchRequest, WebSearchResponse
-from .services import generate_chat_response, generate_streaming_response, analyze_image, analyze_image_streaming, perform_web_search
+from .services import generate_chat_response, generate_streaming_response, analyze_image, analyze_image_streaming, perform_web_search, detect_file_type, convert_pdf_page_to_base64
 from fastapi.responses import StreamingResponse
 from typing import List, Optional
 import base64
@@ -162,82 +162,92 @@ async def analyze_uploaded_image(
         ImageAnalysisResponse 또는 StreamingResponse: 이미지 분석 결과
     """
     try:
-        contents = None
-        content_type = None
         image_url = None
-        
-        print(f"Debug - Request received with file: {file is not None}, base64_image: {base64_image is not None}")
         
         # 방법 1: 파일 업로드
         if file:
             print(f"Debug - Processing uploaded file: {file.filename}")
-            # 지원되는 이미지 형식 확인 - 확장자로 판단
-            file_ext = file.filename.split('.')[-1].lower()
-            print(f"Debug - File extension: {file_ext}")
+            
+            # 파일 타입 감지
+            file_type = detect_file_type(file)
+            if file_type not in ["image", "pdf"]:
+                raise HTTPException(status_code=400, 
+                    detail="지원되지 않는 파일 형식입니다. 이미지(JPEG, PNG, GIF, WEBP) 또는 PDF 파일만 지원합니다.")
             
             # 파일 내용 읽기
             contents = await file.read()
             
-            # PIL을 사용하여 이미지 포맷 확인 및 변환
-            try:
-                img = None
-                with io.BytesIO(contents) as img_buffer:
-                    try:
-                        img = Image.open(img_buffer)
-                        img.load()  # 이미지를 완전히 로드하여 검증
-                        print(f"Debug - Detected image format: {img.format}")
-                        
-                        # AVIF 또는 지원되지 않는 형식이거나 형식을 감지할 수 없는 경우 PNG로 변환
-                        if not img.format or img.format not in ["JPEG", "PNG", "GIF", "WEBP"]:
-                            print(f"Debug - Converting {img.format or 'unknown format'} to PNG")
-                            output = io.BytesIO()
-                            
-                            # RGB 모드로 변환 (알파 채널이 있는 경우 RGBA)
-                            if img.mode in ['RGBA', 'LA']:
-                                img_converted = img.convert("RGBA")
-                            else:
-                                img_converted = img.convert("RGB")
-                            
-                            # PNG로 저장
-                            img_converted.save(output, format="PNG")
-                            contents = output.getvalue()
-                            content_type = "image/png"
-                        else:
-                            # 감지된 형식 사용
-                            content_type = f"image/{img.format.lower()}"
-                    except Exception as e:
-                        print(f"Debug - Error processing image with first attempt: {str(e)}")
-                        # 첫 번째 시도가 실패하면 다른 방법으로 재시도
-                        img_buffer.seek(0)  # 버퍼 위치 초기화
-                        try:
-                            # RGB 모드로 직접 변환 시도
-                            output = io.BytesIO()
-                            img = Image.new('RGB', (800, 600), (255, 255, 255))
-                            img.save(output, format="PNG")
-                            contents = output.getvalue()
-                            content_type = "image/png"
-                            print(f"Debug - Created fallback blank PNG image")
-                        except Exception as e2:
-                            print(f"Debug - Failed to create fallback image: {str(e2)}")
-                            raise HTTPException(status_code=400, 
-                                              detail="이미지 처리에 실패했습니다. 다른 이미지를 사용해주세요.")
-            except Exception as e:
-                print(f"Debug - Critical error processing image: {str(e)}")
-                raise HTTPException(status_code=400, detail="이미지 파일을 처리할 수 없습니다. 지원되는 형식(JPEG, PNG, GIF, WEBP)인지 확인하세요.")
-            
-            # 파일 크기 확인 (20MB 제한)
+            # 파일 크기 확인 (25MB 제한)
             file_size = len(contents) / (1024 * 1024)  # MB 단위로 변환
-            if file_size > 20:
+            if file_size > 25:
                 raise HTTPException(status_code=400, 
-                                   detail="이미지 크기가 너무 큽니다. 최대 20MB까지 지원합니다.")
+                                   detail="파일 크기가 너무 큽니다. 최대 25MB까지 지원합니다.")
             
-            # 파일을 base64로 인코딩 - OpenAI 예제와 동일한 형식
-            base64_image_data = base64.b64encode(contents).decode("utf-8")
-            image_url = f"data:{content_type};base64,{base64_image_data}"
-            
-            print(f"Debug - Created base64 image URL, size: {file_size:.2f}MB, format: {content_type}")
+            # PDF 파일인 경우 이미지로 변환
+            if file_type == "pdf":
+                print("Debug - Converting PDF to image")
+                try:
+                    image_url = convert_pdf_page_to_base64(contents)
+                    prompt = f"이것은 PDF 문서의 첫 번째 페이지입니다. {prompt}"
+                except Exception as e:
+                    print(f"Debug - PDF conversion error: {str(e)}")
+                    raise HTTPException(status_code=400, detail=f"PDF 처리 중 오류: {str(e)}")
+            else:
+                # 일반 이미지 처리 (기존 PIL 처리 로직 포함)
+                print("Debug - Processing regular image file")
+                try:
+                    # PIL을 사용하여 이미지 포맷 확인 및 변환
+                    img = None
+                    with io.BytesIO(contents) as img_buffer:
+                        try:
+                            img = Image.open(img_buffer)
+                            img.load()  # 이미지를 완전히 로드하여 검증
+                            print(f"Debug - Detected image format: {img.format}")
+                            
+                            # AVIF 또는 지원되지 않는 형식이거나 형식을 감지할 수 없는 경우 PNG로 변환
+                            if not img.format or img.format not in ["JPEG", "PNG", "GIF", "WEBP"]:
+                                print(f"Debug - Converting {img.format or 'unknown format'} to PNG")
+                                output = io.BytesIO()
+                                
+                                # RGB 모드로 변환 (알파 채널이 있는 경우 RGBA)
+                                if img.mode in ['RGBA', 'LA']:
+                                    img_converted = img.convert("RGBA")
+                                else:
+                                    img_converted = img.convert("RGB")
+                                
+                                # PNG로 저장
+                                img_converted.save(output, format="PNG")
+                                contents = output.getvalue()
+                                content_type = "image/png"
+                            else:
+                                # 감지된 형식 사용
+                                content_type = f"image/{img.format.lower()}"
+                        except Exception as e:
+                            print(f"Debug - Error processing image with first attempt: {str(e)}")
+                            # 첫 번째 시도가 실패하면 다른 방법으로 재시도
+                            img_buffer.seek(0)  # 버퍼 위치 초기화
+                            try:
+                                # RGB 모드로 직접 변환 시도
+                                output = io.BytesIO()
+                                img = Image.new('RGB', (800, 600), (255, 255, 255))
+                                img.save(output, format="PNG")
+                                contents = output.getvalue()
+                                content_type = "image/png"
+                                print(f"Debug - Created fallback blank PNG image")
+                            except Exception as e2:
+                                print(f"Debug - Failed to create fallback image: {str(e2)}")
+                                raise HTTPException(status_code=400, 
+                                                  detail="이미지 처리에 실패했습니다. 다른 이미지를 사용해주세요.")
+                    
+                    # 파일을 base64로 인코딩
+                    base64_image_data = base64.b64encode(contents).decode("utf-8")
+                    image_url = f"data:{content_type};base64,{base64_image_data}"
+                    
+                except Exception as e:
+                    print(f"Debug - Critical error processing image: {str(e)}")
+                    raise HTTPException(status_code=400, detail="이미지 파일을 처리할 수 없습니다. 지원되는 형식(JPEG, PNG, GIF, WEBP)인지 확인하세요.")
                 
-        # 방법 2: Base64 인코딩된 이미지
+        # 방법 2: Base64 인코딩된 이미지 (기존 복잡한 로직 유지)
         elif base64_image:
             print(f"Debug - Processing base64 image")
             # data:image/ 형식 확인
@@ -340,9 +350,9 @@ async def analyze_uploaded_image(
                 
                 # 크기 확인
                 file_size = len(contents) / (1024 * 1024)  # MB 단위로 변환
-                if file_size > 20:
+                if file_size > 25:
                     raise HTTPException(status_code=400, 
-                                    detail="이미지 크기가 너무 큽니다. 최대 20MB까지 지원합니다.")
+                                    detail="이미지 크기가 너무 큽니다. 최대 25MB까지 지원합니다.")
                 
                 print(f"Debug - Processed base64 image, size: {file_size:.2f}MB, format: {content_type}")
             except HTTPException:
@@ -350,6 +360,7 @@ async def analyze_uploaded_image(
             except Exception as e:
                 print(f"Debug - Error processing base64 image: {str(e)}")
                 raise HTTPException(status_code=400, detail=f"Base64 이미지 처리 오류: {str(e)}")
+                
         else:
             raise HTTPException(status_code=400, 
                                detail="파일 또는 base64 이미지가 필요합니다. 이미지를 제공해주세요.")
@@ -365,7 +376,7 @@ async def analyze_uploaded_image(
         
         # 기본 모델 설정
         if not model:
-            model = "gpt-4.1"  # gpt-4-vision-preview 대신 gpt-4.1 사용
+            model = "gpt-4.1"
         
         print(f"Debug - Creating ImageAnalysisRequest with model: {model}")
         
@@ -407,102 +418,6 @@ async def analyze_uploaded_image(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from .models import FileAnalysisResponse, ProcessedFileInfo, FileUploadMetadata
-from .services import process_uploaded_file, detect_file_type, validate_file_size
-import time
-from typing import Optional
-
-@router.post("/upload-file", response_model=FileAnalysisResponse)
-async def analyze_uploaded_file(
-    file: UploadFile = File(...),
-    prompt: str = Form("이 파일에 대해 자세히 설명해주세요."),
-    model: str = Form("gpt-4.1"),
-    max_tokens: int = Form(1000),
-    stream: bool = Form(False)
-):
-    """
-    파일(이미지/PDF)을 업로드하고 AI 분석을 수행합니다.
-    
-    Args:
-        file: 업로드된 파일 (이미지 또는 PDF)
-        prompt: 분석을 위한 프롬프트
-        model: 사용할 AI 모델
-        max_tokens: 최대 토큰 수
-        stream: 스트리밍 응답 여부
-    
-    Returns:
-        FileAnalysisResponse: 파일 분석 결과
-    """
-    start_time = time.time()
-    
-    try:
-        print(f"Processing file: {file.filename}, content-type: {file.content_type}")
-        
-        # 파일 타입 감지
-        file_type = detect_file_type(file)
-        if file_type == "unknown":
-            raise HTTPException(
-                status_code=400,
-                detail="지원되지 않는 파일 형식입니다. 이미지(JPEG, PNG, GIF, WEBP) 또는 PDF 파일만 지원합니다."
-            )
-        
-        # 파일 크기 검증
-        await validate_file_size(file, max_size_mb=25)
-        
-        # 파일 분석 수행
-        result = await process_uploaded_file(
-            file=file,
-            prompt=prompt,
-            model=model,
-            max_tokens=max_tokens,
-            stream=stream
-        )
-        
-        processing_time = int((time.time() - start_time) * 1000)
-        print(f"File processing completed in {processing_time}ms")
-        
-        return result
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Error in analyze_uploaded_file: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/file-info")
-async def get_file_info(file: UploadFile = File(...)) -> FileUploadMetadata:
-    """
-    업로드된 파일의 메타데이터를 반환합니다.
-    
-    Args:
-        file: 업로드된 파일
-    
-    Returns:
-        FileUploadMetadata: 파일 메타데이터
-    """
-    try:
-        # 파일 크기 계산
-        file.file.seek(0, 2)  # 파일 끝으로 이동
-        file_size = file.file.tell()  # 현재 위치 = 파일 크기
-        file.file.seek(0)  # 파일 시작으로 되돌리기
-        
-        # 파일 타입 감지
-        file_type = detect_file_type(file)
-        
-        return FileUploadMetadata(
-            filename=file.filename or "unknown",
-            content_type=file.content_type or "unknown",
-            file_size=file_size,
-            file_type=file_type
-        )
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"파일 정보 처리 중 오류가 발생했습니다: {str(e)}"
-        )
-
 @router.post("/validate-file")
 async def validate_file(file: UploadFile = File(...)) -> dict:
     """
@@ -525,12 +440,15 @@ async def validate_file(file: UploadFile = File(...)) -> dict:
             }
         
         # 파일 크기 검증
-        try:
-            await validate_file_size(file, max_size_mb=25)
-        except HTTPException as e:
+        file.file.seek(0, 2)  # 파일 끝으로 이동
+        file_size = file.file.tell()  # 현재 위치 = 파일 크기
+        file.file.seek(0)  # 파일 시작으로 되돌리기
+        
+        max_size_bytes = 25 * 1024 * 1024  # 25MB
+        if file_size > max_size_bytes:
             return {
                 "valid": False,
-                "error": e.detail,
+                "error": "파일 크기가 너무 큽니다. 최대 25MB까지 지원합니다.",
                 "max_size": "25MB"
             }
         
@@ -546,8 +464,9 @@ async def validate_file(file: UploadFile = File(...)) -> dict:
             "error": f"파일 검증 중 오류가 발생했습니다: {str(e)}"
         }
 
+
 @router.get("/supported-file-types")
-async def get_supported_file_types() -> dict:
+def get_supported_file_types() -> dict:  # async 제거
     """
     지원되는 파일 타입 목록을 반환합니다.
     
@@ -577,6 +496,7 @@ async def get_supported_file_types() -> dict:
             "streaming_analysis": "실시간 분석 결과 스트리밍"
         }
     }
+
 
 @router.get("/models")
 async def get_available_models():
