@@ -18,6 +18,16 @@ PDF_PROCESSING_TIMEOUT = 180  # 처리 타임아웃 (초)
 PDF_MAX_FILE_SIZE = 50 * 1024 * 1024  # 최대 파일 크기 (50MB)
 TOP_K_MAX = 10  # 검색 결과 최대 개수
 TOP_K_MIN = 1   # 검색 결과 최소 개수
+AVAILABLE_MODELS = [
+    "bedrock.anthropic.claude-3-7-sonnet-v1", # 3/15$
+    "vertex_ai.gemini-2.5-pro-preview-03-25", #1.25/10$
+    "azure.gpt-4o-2024-11-20", #2.75/11$
+    "azure.gpt-4.1-2025-04-14", #2/8$
+    "vertex_ai.gemini-2.5-flash-preview-04-17", #0.15/0.6$
+    "bedrock.anthropic.claude-3-5-haiku", #0.8/4$
+    "azure.gpt-4.1-mini-2025-04-14", #0.4/1.6$
+    "azure.gpt-4.1-nano-2025-04-14", #0.1/0.4$
+]
 
 class PDFBatchProcessor:
     """PDF 배치 처리를 담당하는 클래스"""
@@ -118,7 +128,9 @@ class PDFBatchProcessor:
             analysis_request = ImageAnalysisRequest(
                 image_url=image_url,
                 prompt=f"{sys} 해당 페이지 {page_num})의 텍스트를 정확하게 추출해주세요. 표, 목록, 제목 등의 구조를 유지하면서 읽기 쉽게 정리해주세요.",
-                model="gpt-4o",
+                # model="gpt-4o",
+                # model="gpt-4.1",
+                model="azure.gpt-4o",
                 max_tokens=1000
             )
             

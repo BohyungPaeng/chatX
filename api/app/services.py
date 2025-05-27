@@ -219,6 +219,11 @@ async def analyze_image(request: ImageAnalysisRequest) -> ImageAnalysisResponse:
             "total_tokens": response.usage.total_tokens
         }
         
+
+        print(f"Request max_tokens: {request.max_tokens}")
+        print(f"Response tokens used: {response.usage.completion_tokens}")
+        print(content)
+
         return ImageAnalysisResponse(
             response=content,
             model=model,
@@ -245,7 +250,35 @@ async def analyze_image_streaming(request: ImageAnalysisRequest):
     Returns:
         StreamingResponse: 스트리밍 응답 객체
     """
+
     # 모델 설정 (기본값: GPT-4 Vision)
+    # 1) Azure PWC 분기
+    if request.model and request.model.startswith("azure."):
+        from .pwc_gpt import AsyncPwCGPTModel
+        from .image_flow import create_image_analysis_flow
+
+        # PWC GPT 모델 초기화 및 헬스체크
+        pwc = AsyncPwCGPTModel(default_model_name=request.model)
+        status = await pwc.health_check()
+        if status != 200:
+            # 필요하다면 예외 처리 또는 로그 남기기
+            pass
+
+        # 이미지 분석 Flow 실행
+        flow = create_image_analysis_flow(pwc)
+        shared: dict = {
+            "image_url": request.image_url,
+            "prompt": request.prompt or "",
+            "max_tokens": request.max_tokens
+        }
+        await flow.run_async(shared)
+
+        return ImageAnalysisResponse(
+            response=shared.get("analysis_result", ""),
+            model=request.model,
+            usage={"elapsed": shared.get("analysis_elapsed", 0)},
+        )
+    
     model = request.model or "gpt-4.1"
     
     async def stream_generator():
