@@ -12,6 +12,92 @@ import json
 
 router = APIRouter()
 
+# routers.py 파일에 추가할 엔드포인트들
+
+from .services import process_pdf_batch_extraction
+from .pdf_processor import PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT, PDF_MAX_FILE_SIZE
+
+@router.post("/process-pdf-batch")
+def process_pdf_in_batches(
+    file: UploadFile = File(...),
+    extract_all_pages: bool = Form(True)
+):
+    """
+    PDF 파일을 배치 단위로 처리하여 모든 페이지의 텍스트 추출
+    
+    Args:
+        file: 업로드된 PDF 파일
+        extract_all_pages: 모든 페이지 추출 여부
+    
+    Returns:
+        Dict: 처리 결과 및 추출된 텍스트 데이터
+    """
+    try:
+        # 파일 타입 검증
+        if not file.filename.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="PDF 파일만 지원됩니다.")
+        
+        # 파일 크기 검증
+        file.file.seek(0, 2)
+        file_size = file.file.tell()
+        file.file.seek(0)
+        
+        if file_size > PDF_MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"파일 크기가 너무 큽니다. 최대 {PDF_MAX_FILE_SIZE // (1024*1024)}MB까지 지원합니다."
+            )
+        
+        # 파일 내용 읽기 - 동기 방식으로 변경
+        pdf_content = file.file.read()
+        
+        print(f"Starting batch processing for {file.filename}, size: {file_size // (1024*1024)}MB")
+        
+        # 배치 처리 실행 - 동기 함수로 변경
+        results, completed = process_pdf_batch_extraction(pdf_content, file.filename)
+        
+        # 성공 통계
+        successful_pages = [r for r in results if r.get('success', False)]
+        failed_pages = [r for r in results if not r.get('success', True)]
+        
+        return {
+            "status": "completed" if completed else "partial",
+            "file_name": file.filename,
+            "total_pages_found": len(results),
+            "successful_extractions": len(successful_pages),
+            "failed_extractions": len(failed_pages),
+            "processing_config": {
+                "batch_size": PDF_BATCH_SIZE,
+                "timeout_seconds": PDF_PROCESSING_TIMEOUT
+            },
+            "extracted_data": results,
+            "summary": {
+                "completed": completed,
+                "success_rate": len(successful_pages) / max(len(results), 1) * 100 if results else 0
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in batch PDF processing endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"PDF 배치 처리 중 오류: {str(e)}")
+
+@router.get("/pdf-processing-config")
+async def get_pdf_processing_config():
+    """
+    PDF 처리 설정 정보 반환
+    
+    Returns:
+        Dict: 현재 PDF 처리 설정
+    """
+    return {
+        "batch_size": PDF_BATCH_SIZE,
+        "timeout_seconds": PDF_PROCESSING_TIMEOUT,
+        "max_file_size_mb": PDF_MAX_FILE_SIZE // (1024 * 1024),
+        "supported_formats": ["PDF"],
+        "processing_method": "ThreadPoolExecutor with batch processing"
+    }
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):

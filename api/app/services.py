@@ -13,6 +13,10 @@ import base64
 from PIL import Image
 import fitz  # PyMuPDF for PDF processing
 from fastapi import HTTPException, UploadFile
+# services.py 파일에 추가할 함수들
+
+from .pdf_processor import PDFBatchProcessor
+from typing import List, Dict, Any, Tuple
 
 def detect_file_type(file: UploadFile) -> str:
     """
@@ -76,6 +80,43 @@ def convert_pdf_page_to_base64(pdf_content: bytes) -> str:
     except Exception as e:
         print(f"Error converting PDF: {str(e)}")
         raise Exception(f"PDF 변환 실패: {str(e)}")
+
+
+def process_pdf_batch_extraction(pdf_content: bytes, filename: str) -> Tuple[List[Dict[str, Any]], bool]:
+    """
+    PDF 전체를 배치 단위로 처리하여 텍스트 추출
+    동기 함수로 변경하여 ThreadPoolExecutor 패턴 유지
+    
+    Args:
+        pdf_content: PDF 파일 바이트 데이터
+        filename: 파일명
+    
+    Returns:
+        Tuple[List[Dict], bool]: (추출된 페이지 데이터 리스트, 완료 여부)
+    """
+    try:
+        processor = PDFBatchProcessor(pdf_content, filename)
+        results, completed = processor.process_pdf_in_batches()
+        
+        print(f"Batch processing completed for {filename}: {len(results)} pages processed, completed: {completed}")
+        
+        return results, completed
+        
+    except Exception as e:
+        print(f"Error in batch PDF processing: {str(e)}")
+        return [], False
+
+def get_pdf_processing_progress(processor: PDFBatchProcessor) -> Dict[str, Any]:
+    """
+    PDF 처리 진행률 조회
+    
+    Args:
+        processor: PDFBatchProcessor 인스턴스
+    
+    Returns:
+        Dict: 진행률 정보
+    """
+    return processor.get_progress()
 
 async def generate_chat_response(request: ChatRequest) -> ChatResponse:
     """
