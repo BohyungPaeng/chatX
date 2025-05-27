@@ -7,7 +7,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
-import "highlight.js/styles/github-dark.css";
+import "highlight.js/styles/github.css";
 
 interface Citation {
   url?: string;
@@ -64,7 +64,7 @@ const PreBlock = ({ node, ...props }: any) => {
     <div className="relative group">
       <pre
         {...props}
-        className="bg-gray-100 dark:bg-gray-800 p-4 rounded-md overflow-auto border border-gray-200 dark:border-gray-700"
+        className="bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 p-4 rounded-md overflow-auto border border-gray-200 dark:border-gray-700"
       />
       <button
         onClick={() => copyToClipboard(node)}
