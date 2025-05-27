@@ -14,7 +14,7 @@ from .models import ImageAnalysisRequest
 
 # PDF 처리 관련 상수
 PDF_BATCH_SIZE = 8  # 배치당 처리할 페이지 수
-PDF_PROCESSING_TIMEOUT = 30  # 처리 타임아웃 (초)
+PDF_PROCESSING_TIMEOUT = 180  # 처리 타임아웃 (초)
 PDF_MAX_FILE_SIZE = 50 * 1024 * 1024  # 최대 파일 크기 (50MB)
 TOP_K_MAX = 10  # 검색 결과 최대 개수
 TOP_K_MIN = 1   # 검색 결과 최소 개수
@@ -111,7 +111,7 @@ class PDFBatchProcessor:
             # 2. 기존 analyze_image 함수 사용
             analysis_request = ImageAnalysisRequest(
                 image_url=image_url,
-                prompt=f"당신은 문서 디지털화 전문가입니다. 제시한 스캔 페이지(페이지 {page_num})의 텍스트를 OCR처럼 정확히 읽어주세요. 글자, 숫자, 기호를 순서대로 텍스트로 변환해주세요. 표, 목록, 제목 등의 구조를 유지하면서 읽기 쉽게 정리해주세요.",
+                prompt=f"이 PDF 페이지(페이지 {page_num})의 모든 텍스트를 정확하게 추출해주세요. 표, 목록, 제목 등의 구조를 유지하면서 읽기 쉽게 정리해주세요.",
                 model="gpt-4o",
                 max_tokens=1000
             )
@@ -206,9 +206,99 @@ class PDFBatchProcessor:
         print(f"Batch completed: {len(batch_results)} pages processed")
         return batch_results
     
+    def process_pdf_streaming(self):
+        """
+        PDF를 배치 단위로 처리하면서 실시간으로 결과를 스트리밍
+        Generator 방식으로 처리 완료시마다 텍스트 yield
+        
+        Yields:
+            str: 처리된 페이지 텍스트 또는 상태 메시지
+        """
+        self.start_time = time.time()
+        self.total_pages = self.get_total_pages()
+        
+        print(f"Starting PDF streaming processing: {self.total_pages} pages, batch size: {PDF_BATCH_SIZE}")
+        
+        if self.total_pages == 0:
+            yield "❌ PDF에서 페이지를 찾을 수 없습니다."
+            return
+        
+        yield f"📄 PDF 문서 분석을 시작합니다 (총 {self.total_pages}페이지)\n\n"
+        
+        # 1. 페이지 데이터 생성
+        if not self.create_page_data():
+            yield "❌ PDF 페이지 데이터 생성에 실패했습니다."
+            return
+        
+        yield f"✅ 페이지 데이터 생성 완료\n\n"
+        
+        # 2. 배치별 처리 및 실시간 스트리밍
+        batch_count = 0
+        total_batches = (self.total_pages + PDF_BATCH_SIZE - 1) // PDF_BATCH_SIZE
+        
+        yield f"🔄 총 {total_batches}개 배치로 처리합니다\n\n"
+        
+        # 배치 단위로 순차 처리
+        for batch_start in range(1, self.total_pages + 1, PDF_BATCH_SIZE):
+            # 타임아웃 체크
+            elapsed_time = time.time() - self.start_time
+            if elapsed_time > PDF_PROCESSING_TIMEOUT:
+                yield f"⏰ 처리 시간 초과 ({elapsed_time:.1f}초 > {PDF_PROCESSING_TIMEOUT}초)\n"
+                yield f"지금까지 처리된 {self.processed_pages}페이지의 결과를 반환합니다.\n\n"
+                break
+            
+            batch_end = min(batch_start + PDF_BATCH_SIZE - 1, self.total_pages)
+            page_numbers = list(range(batch_start, batch_end + 1))
+            batch_count += 1
+            
+            yield f"📋 배치 {batch_count}/{total_batches} 처리 중: 페이지 {batch_start}-{batch_end}\n\n"
+            
+            # 배치 처리 실행
+            try:
+                batch_results = self.process_batch(page_numbers)
+                
+                # 배치 결과를 페이지 순서대로 스트리밍
+                for result in sorted(batch_results, key=lambda x: x.get('page_number', 0)):
+                    page_num = result['page_number']
+                    
+                    if result['success']:
+                        text_content = result['text_content']
+                        # 텍스트 미리보기 (콘솔용)
+                        preview_text = text_content[:100] + "..." if len(text_content) > 100 else text_content
+                        print(f"✅ Page {page_num} completed: {preview_text}")
+                        
+                        # 스트리밍용 전체 텍스트
+                        yield f"## 📄 페이지 {page_num}\n\n{text_content}\n\n---\n\n"
+                    else:
+                        error_msg = result.get('error', '알 수 없는 오류')
+                        print(f"❌ Page {page_num} failed: {error_msg}")
+                        yield f"## ❌ 페이지 {page_num} 처리 실패\n\n오류: {error_msg}\n\n---\n\n"
+                
+                yield f"✅ 배치 {batch_count} 완료 ({len(batch_results)}페이지 처리)\n\n"
+                
+            except Exception as e:
+                print(f"Error processing batch {batch_count}: {str(e)}")
+                yield f"❌ 배치 {batch_count} 처리 중 오류 발생: {str(e)}\n\n"
+                break
+        
+        # 처리 완료 요약
+        processing_time = time.time() - self.start_time
+        completed = self.processed_pages >= self.total_pages
+        
+        yield f"## 📊 처리 완료 요약\n\n"
+        yield f"- 총 페이지: {self.total_pages}페이지\n"
+        yield f"- 처리 완료: {self.processed_pages}페이지\n"
+        yield f"- 처리 시간: {processing_time:.1f}초\n"
+        yield f"- 상태: {'✅ 완료' if completed else '⚠️ 부분 완료 (타임아웃)'}\n\n"
+        
+        print(f"\n=== PDF Streaming Processing Summary ===")
+        print(f"Total pages processed: {self.processed_pages}/{self.total_pages}")
+        print(f"Total processing time: {processing_time:.1f}s")
+        print(f"Status: {'Completed' if completed else 'Partial (timeout)'}")
+
     def process_pdf_in_batches(self) -> Tuple[List[Dict[str, Any]], bool]:
         """
-        PDF를 배치 단위로 처리
+        PDF를 배치 단위로 처리 (기존 방식 - 호환성 유지)
         
         Returns:
             Tuple[List[Dict], bool]: (처리된 페이지 데이터 리스트, 완료 여부)

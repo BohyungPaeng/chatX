@@ -13,6 +13,24 @@ import json
 router = APIRouter()
 
 from .pdf_processor import PDFBatchProcessor, PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT, PDF_MAX_FILE_SIZE
+async def pdf_streaming_generator(processor: PDFBatchProcessor):
+    """
+    PDF 배치 처리 결과를 스트리밍 형식으로 변환
+    기존 generate_streaming_response와 동일한 형식 사용
+    """
+    try:
+        for text_chunk in processor.process_pdf_streaming():
+            # 기존 스트리밍 형식과 동일하게 변환
+            yield f"data: {json.dumps({'content': text_chunk, 'is_streaming': True, 'model': 'gpt-4o'})}\n\n"
+        
+        # 스트리밍 완료 신호
+        yield f"data: {json.dumps({'content': '', 'is_streaming': False, 'model': 'gpt-4o'})}\n\n"
+        yield f"data: [DONE]\n\n"
+        
+    except Exception as e:
+        error_message = f"PDF 처리 중 오류가 발생했습니다: {str(e)}"
+        yield f"data: {json.dumps({'content': error_message, 'is_streaming': False, 'error': str(e), 'model': 'gpt-4o'})}\n\n"
+        yield f"data: [DONE]\n\n"
 
 @router.post("/process-pdf-batch")
 def process_pdf_in_batches(
@@ -20,7 +38,70 @@ def process_pdf_in_batches(
     extract_all_pages: bool = Form(True)
 ):
     """
-    PDF 파일을 배치 단위로 처리하여 모든 페이지의 텍스트 추출
+    PDF 파일을 배치 단위로 처리하여 스트리밍 응답 반환
+    
+    Args:
+        file: 업로드된 PDF 파일
+        extract_all_pages: 모든 페이지 추출 여부
+    
+    Returns:
+        StreamingResponse: 실시간 스트리밍 응답
+    """
+    try:
+        print(f"=== PDF Streaming Processing Started ===")
+        print(f"File: {file.filename}")
+        
+        # 파일 타입 검증
+        if not file.filename.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="PDF 파일만 지원됩니다.")
+        
+        # 파일 크기 검증
+        file.file.seek(0, 2)
+        file_size = file.file.tell()
+        file.file.seek(0)
+        
+        print(f"File size: {file_size // (1024*1024)}MB")
+        
+        if file_size > PDF_MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"파일 크기가 너무 큽니다. 최대 {PDF_MAX_FILE_SIZE // (1024*1024)}MB까지 지원합니다."
+            )
+        
+        # 파일 내용 읽기
+        pdf_content = file.file.read()
+        print(f"PDF content loaded: {len(pdf_content)} bytes")
+        
+        # PDFBatchProcessor 생성
+        processor = PDFBatchProcessor(pdf_content, file.filename)
+        print("PDFBatchProcessor created for streaming")
+        
+        # 스트리밍 응답 반환 (기존 services.py 방식과 동일)
+        return StreamingResponse(
+            pdf_streaming_generator(processor),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/event-stream"
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Critical error in PDF streaming processing: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"PDF 스트리밍 처리 중 오류: {str(e)}")
+
+@router.post("/process-pdf-batch-old")
+def process_pdf_in_batches_old(
+    file: UploadFile = File(...),
+    extract_all_pages: bool = Form(True)
+):
+    """
+    PDF 파일을 배치 단위로 처리하여 일반 응답 반환 (기존 방식 호환용)
     
     Args:
         file: 업로드된 PDF 파일
@@ -30,7 +111,7 @@ def process_pdf_in_batches(
         Dict: 처리 결과 및 추출된 텍스트 데이터
     """
     try:
-        print(f"=== PDF Batch Processing Started ===")
+        print(f"=== PDF Batch Processing Started (Old Method) ===")
         print(f"File: {file.filename}")
         
         # 파일 타입 검증
@@ -58,7 +139,7 @@ def process_pdf_in_batches(
         processor = PDFBatchProcessor(pdf_content, file.filename)
         print("PDFBatchProcessor created")
         
-        # 배치 처리 실행
+        # 배치 처리 실행 (기존 방식)
         results, completed = processor.process_pdf_in_batches()
         print(f"Batch processing finished: {len(results)} results, completed: {completed}")
         
@@ -82,16 +163,7 @@ def process_pdf_in_batches(
                 "success_rate": len(successful_pages) / max(len(results), 1) * 100 if results else 0
             }
         }
-        print(f"=== Response Preview ===")
-        if response_data['extracted_data']:
-            for page_data in response_data['extracted_data'][:3]:  # 첫 3페이지만
-                page_num = page_data.get('page_number')
-                text = page_data.get('text_content', '')[:100] + "..."  # 100자 제한
-                success = page_data.get('success')
-                print(f"Page {page_num} ({'✅' if success else '❌'}): {text}")
-
-        print(f"Total: {response_data['total_pages_found']} pages, Success rate: {response_data['summary']['success_rate']:.1f}%")
-        print(f"=== Sending Response ({len(str(response_data))} chars) ===")
+        
         print(f"=== PDF Batch Processing Completed ===")
         return response_data
         
@@ -102,6 +174,7 @@ def process_pdf_in_batches(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"PDF 배치 처리 중 오류: {str(e)}")
+
 
 @router.get("/pdf-processing-config")
 def get_pdf_processing_config():
