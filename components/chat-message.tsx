@@ -32,7 +32,6 @@ export interface PDFProgress {
   processingTime?: number;
 }
 
-// 기존 Message 인터페이스 확장
 export interface Message {
   id: number;
   role: "user" | "system";
@@ -59,7 +58,6 @@ export function ChatMessage({
   const [copiedMap, setCopiedMap] = useState<Record<string, boolean>>({});
   const [showCitations, setShowCitations] = useState<boolean>(true);
 
-  // 코드 복사 함수
   const copyToClipboard = useCallback((text: string, id: string) => {
     navigator.clipboard.writeText(text).then(() => {
       setCopiedMap((prev) => ({ ...prev, [id]: true }));
@@ -95,13 +93,10 @@ export function ChatMessage({
     return "";
   }, []);
 
-  // pre 요소를 커스텀 컴포넌트로 대체
   const PreBlock = useCallback(
-    ({ children, ...props }: PreProps) => {
+    ({ children, ...props }: any) => {
       const preRef = useRef<HTMLPreElement>(null);
       const codeId = `code-${Math.random().toString(36).substr(2, 9)}`;
-
-      // 코드 텍스트 추출
       const codeText = extractCodeText(children);
       const isCopied = copiedMap[codeId] || false;
 
@@ -136,7 +131,6 @@ export function ChatMessage({
     [copiedMap, copyToClipboard, extractCodeText]
   );
 
-  // 표 커스텀 컴포넌트
   const TableComponent = useCallback(({ children, ...props }: any) => {
     return (
       <div className="overflow-x-auto my-4">
@@ -188,32 +182,59 @@ export function ChatMessage({
     );
   }, []);
 
-  // 인용 정보 표시 토글
   const toggleCitations = useCallback(() => {
     setShowCitations((prev) => !prev);
   }, []);
 
+  // 스타일 객체 정의
+  const messageStyles = {
+    container: `flex gap-4 ${isUser ? "flex-row-reverse" : ""}`,
+    avatar: `flex items-center justify-center flex-shrink-0 ${isUser ? "bg-orange-500" : "bg-gray-700"}`,
+    messageContent: `flex-1 flex items-start ${isUser ? "justify-end" : "justify-start"} flex-col ${isUser ? "items-end" : "items-start"}`,
+    userMessage: "text-gray-700 dark:text-foreground whitespace-pre-line text-right",
+    imageContainer: `mb-2 ${isUser ? "ml-auto" : "mr-auto"} max-w-xs`,
+    image: "rounded-lg object-contain max-h-64 border border-gray-200 dark:border-gray-700 shadow-sm",
+    systemContainer: "w-full",
+    pdfCardContainer: "mb-4",
+    proseContainer: `text-gray-700 dark:text-foreground prose dark:prose-invert prose-headings:font-semibold prose-a:text-orange-500 dark:prose-a:text-orange-400 prose-a:hover:text-orange-600 dark:prose-a:hover:text-orange-300 prose-p:my-2 prose-li:my-0.5 prose-pre:bg-gray-100 dark:prose-pre:bg-gray-800 prose-pre:border prose-pre:border-gray-200 dark:prose-pre:border-gray-700 prose-pre:shadow-sm prose-table:border-collapse prose-table:w-full prose-th:bg-gray-100 dark:prose-th:bg-gray-800 prose-th:p-2 prose-th:text-left prose-td:border prose-td:p-2 prose-td:border-gray-200 dark:prose-td:border-gray-700 max-w-none ${isUser ? "text-right" : "text-left"}`,
+    citationsContainer: "mt-3 w-full",
+    citationButton: "flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-orange-500 dark:hover:text-orange-400",
+    citationsList: "mt-1 space-y-1 text-sm text-gray-600 dark:text-gray-300",
+    citationItem: "flex items-start gap-2 py-1 px-2 bg-gray-50 dark:bg-gray-800 rounded-md border border-gray-200 dark:border-gray-700",
+    citationIndex: "text-xs text-gray-500 dark:text-gray-400 mt-0.5",
+    citationLink: "text-orange-500 dark:text-orange-400 hover:underline",
+    citationUrl: "text-xs text-gray-500 dark:text-gray-400 truncate"
+  };
+
   return (
-    <div className={`flex gap-4 ${isUser ? "flex-row-reverse" : ""}`}>
-      <Avatar className={`flex items-center justify-center flex-shrink-0 ${isUser ? "bg-orange-500" : "bg-gray-700"}`}>
-        {isUser ? <User className="h-5 w-5 text-white" /> : <Bot className="h-5 w-5 text-white" />}
+    <div className={messageStyles.container}>
+      <Avatar className={messageStyles.avatar}>
+        {isUser ? (
+          <User className="h-5 w-5 text-white" />
+        ) : (
+          <Bot className="h-5 w-5 text-white" />
+        )}
       </Avatar>
       
-      <div className={`flex-1 flex items-start ${isUser ? "justify-end" : "justify-start"} flex-col ${isUser ? "items-end" : "items-start"}`}>
+      <div className={messageStyles.messageContent}>
         {isUser ? (
-          <div className="text-gray-700 dark:text-foreground whitespace-pre-line text-right">
+          <div className={messageStyles.userMessage}>
             {message.imageUrl && showImage && (
-              <div className={`mb-2 ${isUser ? "ml-auto" : "mr-auto"} max-w-xs`}>
-                <img src={message.imageUrl} alt="Uploaded image" className="rounded-lg object-contain max-h-64 border border-gray-200 dark:border-gray-700 shadow-sm" />
+              <div className={messageStyles.imageContainer}>
+                <img
+                  src={message.imageUrl}
+                  alt="Uploaded image"
+                  className={messageStyles.image}
+                />
               </div>
             )}
             {message.content}
           </div>
         ) : (
-          <div className="w-full">
+          <div className={messageStyles.systemContainer}>
             {/* PDF Progress Card */}
             {message.messageType === "pdf-progress" && message.pdfProgress && (
-              <div className="mb-4">
+              <div className={messageStyles.pdfCardContainer}>
                 <PDFProgressCard
                   fileName={message.pdfProgress.fileName}
                   totalPages={message.pdfProgress.totalPages}
@@ -225,10 +246,10 @@ export function ChatMessage({
                 />
               </div>
             )}
-  
+
             {/* PDF Results Viewer */}
             {message.messageType === "pdf-results" && message.pdfPages && (
-              <div className="mb-4">
+              <div className={messageStyles.pdfCardContainer}>
                 <PDFResultsViewer
                   fileName={message.pdfProgress?.fileName || "PDF 문서"}
                   pages={message.pdfPages}
@@ -236,10 +257,10 @@ export function ChatMessage({
                 />
               </div>
             )}
-  
+
             {/* 일반 텍스트 메시지 */}
             {(!message.messageType || message.messageType === "normal") && message.content && (
-              <div className={`text-gray-700 dark:text-foreground prose dark:prose-invert prose-headings:font-semibold prose-a:text-orange-500 dark:prose-a:text-orange-400 prose-a:hover:text-orange-600 dark:prose-a:hover:text-orange-300 prose-p:my-2 prose-li:my-0.5 prose-pre:bg-gray-100 dark:prose-pre:bg-gray-800 prose-pre:border prose-pre:border-gray-200 dark:prose-pre:border-gray-700 prose-pre:shadow-sm prose-table:border-collapse prose-table:w-full prose-th:bg-gray-100 dark:prose-th:bg-gray-800 prose-th:p-2 prose-th:text-left prose-td:border prose-td:p-2 prose-td:border-gray-200 dark:prose-td:border-gray-700 max-w-none ${isUser ? "text-right" : "text-left"}`}>
+              <div className={messageStyles.proseContainer}>
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   rehypePlugins={[rehypeRaw, rehypeHighlight]}
@@ -251,7 +272,9 @@ export function ChatMessage({
                     td: TableCell,
                     th: TableHeader,
                     strong: ({ node, children, ...props }) => (
-                      <strong className="font-bold" {...props}>{children}</strong>
+                      <strong className="font-bold" {...props}>
+                        {children}
+                      </strong>
                     ),
                   }}
                 >
@@ -260,26 +283,39 @@ export function ChatMessage({
                 {isStreaming && <span className="animate-pulse">▌</span>}
               </div>
             )}
-  
+
             {/* 인용 정보 */}
             {message.citations && message.citations.length > 0 && (
-              <div className="mt-3 w-full">
+              <div className={messageStyles.citationsContainer}>
                 <div className="flex items-center gap-2">
-                  <button onClick={toggleCitations} className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-orange-500 dark:hover:text-orange-400">
+                  <button
+                    onClick={toggleCitations}
+                    className={messageStyles.citationButton}
+                  >
                     <Link size={14} />
-                    {showCitations ? "인용 정보 숨기기" : "인용 정보 보기"} ({message.citations.length})
+                    {showCitations ? "인용 정보 숨기기" : "인용 정보 보기"} (
+                    {message.citations.length})
                   </button>
                 </div>
+
                 {showCitations && (
-                  <div className="mt-1 space-y-1 text-sm text-gray-600 dark:text-gray-300">
+                  <div className={messageStyles.citationsList}>
                     {message.citations.map((citation, index) => (
-                      <div key={index} className="flex items-start gap-2 py-1 px-2 bg-gray-50 dark:bg-gray-800 rounded-md border border-gray-200 dark:border-gray-700">
-                        <span className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">[{index + 1}]</span>
-                        <div className="flex-1">
-                          <a href={citation.url} target="_blank" rel="noreferrer" className="text-orange-500 dark:text-orange-400 hover:underline">
+                      <div key={index} className={messageStyles.citationItem}>
+                        <span className={messageStyles.citationIndex}>
+                          [{index + 1}]
+                        </span>
+                        <div className="flex-1">                          
+                            href={citation.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className={messageStyles.citationLink}
+                          <a>
                             {citation.title || citation.url}
                           </a>
-                          <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{citation.url}</div>
+                          <div className={messageStyles.citationUrl}>
+                            {citation.url}
+                          </div>
                         </div>
                       </div>
                     ))}
