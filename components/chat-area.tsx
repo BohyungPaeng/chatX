@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { ChatMessage } from "@/components/chat-message";
 import { useMobile } from "@/hooks/use-mobile";
+import { useApiTimeout } from "@/hooks/use-timeout";
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
   DropdownMenu,
@@ -131,6 +132,8 @@ export function ChatArea({
     error: null,
     uploadedUrl: null
   });
+  const { getTimeoutDuration } = useApiTimeout(); 
+  const timeoutDuration = getTimeoutDuration(selectedFile?.type);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
@@ -531,10 +534,16 @@ export function ChatArea({
         setError("API 요청 시간이 초과되었습니다. 다른 모델을 선택해보세요.");
         setIsLoading(false);
         setIsStreaming(false);
-      }, 30000);
+      }, timeoutDuration);
 
       try {
-        const response = await fetch(`${API_URL}/upload-image`, {
+        // PDF 파일과 이미지 파일을 구분하여 적절한 엔드포인트로 요청
+        const isPdfFile = selectedFile?.type === "application/pdf";
+        const endpoint = isPdfFile ? "/process-pdf-batch" : "/upload-image";
+        
+        console.log(`Sending ${isPdfFile ? 'PDF' : 'image'} to ${endpoint}`);
+        
+        const response = await fetch(`${API_URL}${endpoint}`, {
           method: "POST",
           body: formData,
           signal: controller.signal,
@@ -817,12 +826,14 @@ export function ChatArea({
 
       // POST 요청으로 스트리밍 데이터 가져오기
       const controller = new AbortController();
+      const isPdfFile = selectedFile && selectedFile.type === "application/pdf";
+
       const timeoutId = setTimeout(() => {
         controller.abort();
-        setError("API 요청 시간이 초과되었습니다. 다른 모델을 선택해보세요.");
+        setError(`${isPdfFile ? 'PDF 처리' : 'API 요청'} 시간이 초과되었습니다. ${isPdfFile ? '큰 PDF 파일이거나 서버가 바쁠 수 있습니다.' : '다른 모델을 선택해보세요.'}`);
         setIsLoading(false);
         setIsStreaming(false);
-      }, 30000);
+      }, timeoutDuration);
 
       try {
         const response = await fetch(`${API_URL}/chat`, {

@@ -12,10 +12,7 @@ import json
 
 router = APIRouter()
 
-# routers.py 파일에 추가할 엔드포인트들
-
-from .services import process_pdf_batch_extraction
-from .pdf_processor import PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT, PDF_MAX_FILE_SIZE
+from .pdf_processor import PDFBatchProcessor, PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT, PDF_MAX_FILE_SIZE
 
 @router.post("/process-pdf-batch")
 def process_pdf_in_batches(
@@ -33,6 +30,9 @@ def process_pdf_in_batches(
         Dict: 처리 결과 및 추출된 텍스트 데이터
     """
     try:
+        print(f"=== PDF Batch Processing Started ===")
+        print(f"File: {file.filename}")
+        
         # 파일 타입 검증
         if not file.filename.lower().endswith('.pdf'):
             raise HTTPException(status_code=400, detail="PDF 파일만 지원됩니다.")
@@ -42,25 +42,31 @@ def process_pdf_in_batches(
         file_size = file.file.tell()
         file.file.seek(0)
         
+        print(f"File size: {file_size // (1024*1024)}MB")
+        
         if file_size > PDF_MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=400, 
                 detail=f"파일 크기가 너무 큽니다. 최대 {PDF_MAX_FILE_SIZE // (1024*1024)}MB까지 지원합니다."
             )
         
-        # 파일 내용 읽기 - 동기 방식으로 변경
+        # 파일 내용 읽기
         pdf_content = file.file.read()
+        print(f"PDF content loaded: {len(pdf_content)} bytes")
         
-        print(f"Starting batch processing for {file.filename}, size: {file_size // (1024*1024)}MB")
+        # PDFBatchProcessor 생성 및 실행
+        processor = PDFBatchProcessor(pdf_content, file.filename)
+        print("PDFBatchProcessor created")
         
-        # 배치 처리 실행 - 동기 함수로 변경
-        results, completed = process_pdf_batch_extraction(pdf_content, file.filename)
+        # 배치 처리 실행
+        results, completed = processor.process_pdf_in_batches()
+        print(f"Batch processing finished: {len(results)} results, completed: {completed}")
         
         # 성공 통계
         successful_pages = [r for r in results if r.get('success', False)]
         failed_pages = [r for r in results if not r.get('success', True)]
         
-        return {
+        response_data = {
             "status": "completed" if completed else "partial",
             "file_name": file.filename,
             "total_pages_found": len(results),
@@ -76,15 +82,29 @@ def process_pdf_in_batches(
                 "success_rate": len(successful_pages) / max(len(results), 1) * 100 if results else 0
             }
         }
+        print(f"=== Response Preview ===")
+        if response_data['extracted_data']:
+            for page_data in response_data['extracted_data'][:3]:  # 첫 3페이지만
+                page_num = page_data.get('page_number')
+                text = page_data.get('text_content', '')[:100] + "..."  # 100자 제한
+                success = page_data.get('success')
+                print(f"Page {page_num} ({'✅' if success else '❌'}): {text}")
+
+        print(f"Total: {response_data['total_pages_found']} pages, Success rate: {response_data['summary']['success_rate']:.1f}%")
+        print(f"=== Sending Response ({len(str(response_data))} chars) ===")
+        print(f"=== PDF Batch Processing Completed ===")
+        return response_data
         
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Error in batch PDF processing endpoint: {str(e)}")
+        print(f"Critical error in PDF batch processing: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"PDF 배치 처리 중 오류: {str(e)}")
 
 @router.get("/pdf-processing-config")
-async def get_pdf_processing_config():
+def get_pdf_processing_config():
     """
     PDF 처리 설정 정보 반환
     
