@@ -5,33 +5,49 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
 import React, { useState, useRef, useCallback, ReactNode } from "react";
+import { PDFProgressCard } from "@/components/pdf-progress-card";
+import { PDFResultsViewer } from "@/components/pdf-results-viewer";
 
-interface Citation {
+export interface Citation {
   url: string;
   title: string;
   start_index: number;
   end_index: number;
 }
 
-interface Message {
+export interface PDFPage {
+  pageNumber: number;
+  textContent: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface PDFProgress {
+  fileName: string;
+  totalPages: number;
+  processedPages: number;
+  isCompleted: boolean;
+  isError: boolean;
+  errorMessage?: string;
+  processingTime?: number;
+}
+
+// 기존 Message 인터페이스 확장
+export interface Message {
   id: number;
   role: "user" | "system";
   content: string;
   imageUrl?: string;
   citations?: Citation[];
+  pdfProgress?: PDFProgress;
+  pdfPages?: PDFPage[];
+  messageType?: "normal" | "pdf-progress" | "pdf-results";
 }
 
 interface ChatMessageProps {
   message: Message;
   isStreaming?: boolean;
   showImage?: boolean;
-}
-
-// 커스텀 컴포넌트 인터페이스
-interface PreProps {
-  children?: ReactNode;
-  className?: string;
-  [key: string]: any;
 }
 
 export function ChatMessage({
@@ -179,111 +195,91 @@ export function ChatMessage({
 
   return (
     <div className={`flex gap-4 ${isUser ? "flex-row-reverse" : ""}`}>
-      <Avatar
-        className={`flex items-center justify-center flex-shrink-0 ${
-          isUser ? "bg-orange-500" : "bg-gray-700"
-        }`}
-      >
-        {isUser ? (
-          <User className="h-5 w-5 text-white" />
-        ) : (
-          <Bot className="h-5 w-5 text-white" />
-        )}
+      <Avatar className={`flex items-center justify-center flex-shrink-0 ${isUser ? "bg-orange-500" : "bg-gray-700"}`}>
+        {isUser ? <User className="h-5 w-5 text-white" /> : <Bot className="h-5 w-5 text-white" />}
       </Avatar>
-      <div
-        className={`flex-1 flex items-start ${
-          isUser ? "justify-end" : "justify-start"
-        } flex-col ${isUser ? "items-end" : "items-start"}`}
-      >
+      
+      <div className={`flex-1 flex items-start ${isUser ? "justify-end" : "justify-start"} flex-col ${isUser ? "items-end" : "items-start"}`}>
         {isUser ? (
           <div className="text-gray-700 dark:text-foreground whitespace-pre-line text-right">
             {message.imageUrl && showImage && (
-              <div
-                className={`mb-2 ${isUser ? "ml-auto" : "mr-auto"} max-w-xs`}
-              >
-                <img
-                  src={message.imageUrl}
-                  alt="Uploaded image"
-                  className="rounded-lg object-contain max-h-64 border border-gray-200 dark:border-gray-700 shadow-sm"
-                />
+              <div className={`mb-2 ${isUser ? "ml-auto" : "mr-auto"} max-w-xs`}>
+                <img src={message.imageUrl} alt="Uploaded image" className="rounded-lg object-contain max-h-64 border border-gray-200 dark:border-gray-700 shadow-sm" />
               </div>
             )}
             {message.content}
           </div>
         ) : (
           <div className="w-full">
-            <div
-              className={`text-gray-700 dark:text-foreground prose dark:prose-invert 
-              prose-headings:font-semibold
-              prose-a:text-orange-500 dark:prose-a:text-orange-400
-              prose-a:hover:text-orange-600 dark:prose-a:hover:text-orange-300
-              prose-p:my-2
-              prose-li:my-0.5
-              prose-pre:bg-gray-100 dark:prose-pre:bg-gray-800 prose-pre:border prose-pre:border-gray-200 dark:prose-pre:border-gray-700
-              prose-pre:shadow-sm
-              prose-table:border-collapse prose-table:w-full
-              prose-th:bg-gray-100 dark:prose-th:bg-gray-800 prose-th:p-2 prose-th:text-left
-              prose-td:border prose-td:p-2 prose-td:border-gray-200 dark:prose-td:border-gray-700
-              max-w-none ${isUser ? "text-right" : "text-left"}`}
-            >
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeRaw, rehypeHighlight]}
-                components={{
-                  pre: PreBlock,
-                  table: TableComponent,
-                  thead: TableHead,
-                  tr: TableRow,
-                  td: TableCell,
-                  th: TableHeader,
-                  strong: ({ node, children, ...props }) => (
-                    <strong className="font-bold" {...props}>
-                      {children}
-                    </strong>
-                  ),
-                }}
-              >
-                {message.content}
-              </ReactMarkdown>
-              {isStreaming && <span className="animate-pulse">▌</span>}
-            </div>
-
-            {/* 인용 정보 표시 부분 */}
+            {/* PDF Progress Card */}
+            {message.messageType === "pdf-progress" && message.pdfProgress && (
+              <div className="mb-4">
+                <PDFProgressCard
+                  fileName={message.pdfProgress.fileName}
+                  totalPages={message.pdfProgress.totalPages}
+                  processedPages={message.pdfProgress.processedPages}
+                  isCompleted={message.pdfProgress.isCompleted}
+                  isError={message.pdfProgress.isError}
+                  errorMessage={message.pdfProgress.errorMessage}
+                  processingTime={message.pdfProgress.processingTime}
+                />
+              </div>
+            )}
+  
+            {/* PDF Results Viewer */}
+            {message.messageType === "pdf-results" && message.pdfPages && (
+              <div className="mb-4">
+                <PDFResultsViewer
+                  fileName={message.pdfProgress?.fileName || "PDF 문서"}
+                  pages={message.pdfPages}
+                  isStreaming={isStreaming}
+                />
+              </div>
+            )}
+  
+            {/* 일반 텍스트 메시지 */}
+            {(!message.messageType || message.messageType === "normal") && message.content && (
+              <div className={`text-gray-700 dark:text-foreground prose dark:prose-invert prose-headings:font-semibold prose-a:text-orange-500 dark:prose-a:text-orange-400 prose-a:hover:text-orange-600 dark:prose-a:hover:text-orange-300 prose-p:my-2 prose-li:my-0.5 prose-pre:bg-gray-100 dark:prose-pre:bg-gray-800 prose-pre:border prose-pre:border-gray-200 dark:prose-pre:border-gray-700 prose-pre:shadow-sm prose-table:border-collapse prose-table:w-full prose-th:bg-gray-100 dark:prose-th:bg-gray-800 prose-th:p-2 prose-th:text-left prose-td:border prose-td:p-2 prose-td:border-gray-200 dark:prose-td:border-gray-700 max-w-none ${isUser ? "text-right" : "text-left"}`}>
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeRaw, rehypeHighlight]}
+                  components={{
+                    pre: PreBlock,
+                    table: TableComponent,
+                    thead: TableHead,
+                    tr: TableRow,
+                    td: TableCell,
+                    th: TableHeader,
+                    strong: ({ node, children, ...props }) => (
+                      <strong className="font-bold" {...props}>{children}</strong>
+                    ),
+                  }}
+                >
+                  {message.content}
+                </ReactMarkdown>
+                {isStreaming && <span className="animate-pulse">▌</span>}
+              </div>
+            )}
+  
+            {/* 인용 정보 */}
             {message.citations && message.citations.length > 0 && (
               <div className="mt-3 w-full">
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={toggleCitations}
-                    className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-orange-500 dark:hover:text-orange-400"
-                  >
+                  <button onClick={toggleCitations} className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 hover:text-orange-500 dark:hover:text-orange-400">
                     <Link size={14} />
-                    {showCitations ? "인용 정보 숨기기" : "인용 정보 보기"} (
-                    {message.citations.length})
+                    {showCitations ? "인용 정보 숨기기" : "인용 정보 보기"} ({message.citations.length})
                   </button>
                 </div>
-
                 {showCitations && (
                   <div className="mt-1 space-y-1 text-sm text-gray-600 dark:text-gray-300">
                     {message.citations.map((citation, index) => (
-                      <div
-                        key={index}
-                        className="flex items-start gap-2 py-1 px-2 bg-gray-50 dark:bg-gray-800 rounded-md border border-gray-200 dark:border-gray-700"
-                      >
-                        <span className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                          [{index + 1}]
-                        </span>
+                      <div key={index} className="flex items-start gap-2 py-1 px-2 bg-gray-50 dark:bg-gray-800 rounded-md border border-gray-200 dark:border-gray-700">
+                        <span className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">[{index + 1}]</span>
                         <div className="flex-1">
-                          <a
-                            href={citation.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-orange-500 dark:text-orange-400 hover:underline"
-                          >
+                          <a href={citation.url} target="_blank" rel="noreferrer" className="text-orange-500 dark:text-orange-400 hover:underline">
                             {citation.title || citation.url}
                           </a>
-                          <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                            {citation.url}
-                          </div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{citation.url}</div>
                         </div>
                       </div>
                     ))}

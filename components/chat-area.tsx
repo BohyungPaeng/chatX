@@ -16,7 +16,7 @@ import {
   Globe,
   FileText,
 } from "lucide-react";
-import { ChatMessage } from "@/components/chat-message";
+import { ChatMessage, Message, Citation, PDFPage, PDFProgress } from "@/components/chat-message";
 import { useMobile } from "@/hooks/use-mobile";
 import { useApiTimeout } from "@/hooks/use-timeout";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -27,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
+import { usePDFProcessor } from "@/hooks/use-pdf-processor";
 
 interface ChatAreaProps {
   onMenuClick: () => void;
@@ -483,14 +484,58 @@ export function ChatArea({
       setMessages((prev) => [...prev, userMessage]);
       setInput("");
 
-      // 시스템 메시지 추가 (빈 메시지로 시작)
-      const newMessageId = messages.length + 2;
-      const initialMessage: Message = {
-        id: newMessageId,
-        role: "system",
-        content: "",
-      };
-      setMessages((prev) => [...prev, initialMessage]);
+      let newMessageId: number;
+      let progressMessageId: number | null = null;
+      let resultsMessageId: number | null = null;
+
+      if (isPdf) {
+        // PDF 진행률 메시지 추가
+        progressMessageId = messages.length + 2;
+        const progressMessage: Message = {
+          id: progressMessageId,
+          role: "system",
+          content: "",
+          messageType: "pdf-progress",
+          pdfProgress: {
+            fileName: selectedFile.name,
+            totalPages: 0,
+            processedPages: 0,
+            isCompleted: false,
+            isError: false,
+            processingTime: 0
+          }
+        };
+        
+        // 결과 뷰어 메시지 추가
+        resultsMessageId = messages.length + 3;
+        const resultsMessage: Message = {
+          id: resultsMessageId,
+          role: "system", 
+          content: "",
+          messageType: "pdf-results",
+          pdfPages: [],
+          pdfProgress: {
+            fileName: selectedFile.name,
+            totalPages: 0,
+            processedPages: 0,
+            isCompleted: false,
+            isError: false
+          }
+        };
+
+        setMessages(prev => [...prev, progressMessage, resultsMessage]);
+        newMessageId = resultsMessageId;
+      } else {
+        // 이미지 처리 - 시스템 메시지 추가 (빈 메시지로 시작)
+        newMessageId = messages.length + 2;
+        const initialMessage: Message = {
+          id: newMessageId,
+          role: "system",
+          content: "",
+        };
+        setMessages((prev) => [...prev, initialMessage]);
+      }
+      
       setIsStreaming(true);
 
       // FormData 생성
@@ -576,47 +621,109 @@ export function ChatArea({
         const decoder = new TextDecoder();
         let fullContent = "";
         let buffer = "";
+        let pdfPages: PDFPage[] = [];
+        let processedPages = 0;
+        const startTime = Date.now();
 
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
-
-          // 텍스트 디코딩
+        
           const chunk = decoder.decode(value, { stream: true });
           buffer += chunk;
-
-          // 이벤트 스트림 형식 처리 (data: {...}\n\n)
+        
           const lines = buffer.split("\n\n");
           buffer = lines.pop() || "";
-
+        
           for (const line of lines) {
             if (line.trim() === "") continue;
             if (line.includes("[DONE]")) {
               setIsStreaming(false);
               continue;
             }
-
+        
             try {
-              // "data: " 접두사 제거
               const jsonStr = line.replace(/^data: /, "").trim();
               if (!jsonStr) continue;
-
+        
               const data = JSON.parse(jsonStr);
-
+        
               if (data.content) {
-                fullContent += data.content;
-
-                // 실시간으로 메시지 업데이트
-                setMessages((currentMessages) =>
-                  currentMessages.map((msg) =>
-                    msg.id === newMessageId
-                      ? { ...msg, content: fullContent }
-                      : msg
-                  )
-                );
+                if (isPdf && progressMessageId && resultsMessageId) {
+                  // PDF 처리 - 더 간단한 매칭으로 수정
+                  if (data.content.includes("📄 페이지")) {
+                    const pageMatch = data.content.match(/페이지 (\d+)/);
+                    if (pageMatch) {
+                      const pageNum = parseInt(pageMatch[1]);
+                      const contentMatch = data.content.match(/📄 페이지 \d+\n\n(.*?)(?=\n\n---|\n\n##|\n\n📊|$)/s);
+                      const pageContent = contentMatch ? contentMatch[1] : data.content;
+                      
+                      const newPage: PDFPage = {
+                        pageNumber: pageNum,
+                        textContent: pageContent,
+                        success: true
+                      };
+                      
+                      pdfPages.push(newPage);
+                      processedPages++;
+                      
+                      // 즉시 상태 업데이트
+                      setMessages(currentMessages =>
+                        currentMessages.map(msg => {
+                          if (msg.id === progressMessageId && msg.pdfProgress) {
+                            return {
+                              ...msg,
+                              pdfProgress: {
+                                ...msg.pdfProgress,
+                                processedPages: processedPages,
+                                processingTime: Math.floor((Date.now() - startTime) / 1000)
+                              }
+                            };
+                          }
+                          if (msg.id === resultsMessageId) {
+                            return {
+                              ...msg,
+                              pdfPages: [...pdfPages]
+                            };
+                          }
+                          return msg;
+                        })
+                      );
+                    }
+                  }
+                } else {
+                  // 일반 이미지 처리 - 기존 로직 복원
+                  fullContent += data.content;
+                  const imageMessageId = messages.length + 2;
+        
+                  setMessages((currentMessages) =>
+                    currentMessages.map((msg) =>
+                      msg.id === imageMessageId
+                        ? { ...msg, content: fullContent }
+                        : msg
+                    )
+                  );
+                }
               }
-
+        
               if (data.is_streaming === false) {
+                if (isPdf && progressMessageId) {
+                  setMessages(currentMessages =>
+                    currentMessages.map(msg => {
+                      if (msg.id === progressMessageId && msg.pdfProgress) {
+                        return {
+                          ...msg,
+                          pdfProgress: {
+                            ...msg.pdfProgress,
+                            isCompleted: true,
+                            processingTime: Math.floor((Date.now() - startTime) / 1000)
+                          }
+                        };
+                      }
+                      return msg;
+                    })
+                  );
+                }
                 setIsStreaming(false);
               }
             } catch (e) {
@@ -656,8 +763,8 @@ export function ChatArea({
       setIsLoading(false);
     }
   };
-  
-  // 메시지 전송 함수 수정 - 웹 검색 지원 추가
+    
+    // 메시지 전송 함수 수정 - 웹 검색 지원 추가
   const sendMessage = async () => {
     // 입력 없고 이미지도 없으면 아무 것도 하지 않음
     if (!input.trim() && !(selectedFile || previewUrl)) {
