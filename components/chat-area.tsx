@@ -135,6 +135,15 @@ export function ChatArea({
   });
   const { getTimeoutDuration } = useApiTimeout(); 
   const timeoutDuration = getTimeoutDuration(selectedFile?.type);
+  const [pdfProgress, setPdfProgress] = useState<{
+    totalPages: number;
+    processedPages: number;
+    isProcessing: boolean;
+  }>({
+    totalPages: 0,
+    processedPages: 0,
+    isProcessing: false
+  });
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
@@ -472,6 +481,15 @@ export function ChatArea({
       const isPdf = selectedFile.type === "application/pdf";
       const fileTypeName = isPdf ? "PDF 문서" : "이미지";
 
+      // PDF인 경우 프로그레스 상태 초기화
+      if (isPdf) {
+        setPdfProgress({
+          totalPages: 0,
+          processedPages: 0,
+          isProcessing: true
+        });
+      }
+
       // 사용자 메시지 생성
       const userMessage: Message = {
         id: messages.length + 1,
@@ -579,6 +597,9 @@ export function ChatArea({
         setError("API 요청 시간이 초과되었습니다. 다른 모델을 선택해보세요.");
         setIsLoading(false);
         setIsStreaming(false);
+        if (isPdf) {
+          setPdfProgress(prev => ({ ...prev, isProcessing: false }));
+        }
       }, timeoutDuration);
 
       try {
@@ -623,10 +644,56 @@ export function ChatArea({
         let buffer = "";
         let pdfPages: PDFPage[] = [];
         let processedPages = 0;
-        let isStreamingComplete = false; // ← 추가: 완료 플래그
+        let isStreamingComplete = false;
         const startTime = Date.now();
 
-        while (true && !isStreamingComplete) { // ← 추가: 완료 조건
+        // 🆕 헬퍼 함수 정의
+        const updatePdfProgressState = (type: 'init' | 'update' | 'complete', data: any) => {
+          if (type === 'init') {
+            setPdfProgress(prev => ({
+              ...prev,
+              totalPages: data.total_pages,
+              processedPages: 0,
+              isProcessing: true
+            }));
+          } else if (type === 'complete') {
+            setPdfProgress(prev => ({
+              ...prev,
+              processedPages: data.processed_pages,
+              totalPages: data.total_pages,
+              isProcessing: false
+            }));
+          } else {
+            setPdfProgress(prev => ({
+              ...prev,
+              processedPages: data.processed_pages,
+              totalPages: data.total_pages
+            }));
+          }
+
+          // 메시지의 pdfProgress도 업데이트
+          if (progressMessageId) {
+            setMessages(currentMessages =>
+              currentMessages.map(msg => {
+                if (msg.id === progressMessageId && msg.pdfProgress) {
+                  return {
+                    ...msg,
+                    pdfProgress: {
+                      ...msg.pdfProgress,
+                      totalPages: data.total_pages,
+                      processedPages: data.processed_pages || 0,
+                      isCompleted: type === 'complete',
+                      processingTime: Math.floor((Date.now() - startTime) / 1000)
+                    }
+                  };
+                }
+                return msg;
+              })
+            );
+          }
+        };
+
+        while (true && !isStreamingComplete) {
           const { value, done } = await reader.read();
           if (done) break;
 
@@ -641,8 +708,11 @@ export function ChatArea({
             
             if (line.includes("[DONE]")) {
               setIsStreaming(false);
-              isStreamingComplete = true; // ← 수정: 플래그 설정
-              break; // ← 수정: for문 탈출
+              isStreamingComplete = true;
+              if (isPdf) {
+                setPdfProgress(prev => ({ ...prev, isProcessing: false }));
+              }
+              break;
             }
 
             try {
@@ -651,9 +721,25 @@ export function ChatArea({
 
               const data = JSON.parse(jsonStr);
 
+              // 🆕 프로그레스 정보 처리 (progress_data 형태)
+              if (data.type === 'init') {
+                updatePdfProgressState('init', data);
+                continue;
+              }
+
+              if (data.type === 'update') {
+                updatePdfProgressState('update', data);
+                continue;
+              }
+
+              if (data.type === 'complete') {
+                updatePdfProgressState('complete', data);
+                continue;
+              }
+
               if (data.content) {
                 if (isPdf && progressMessageId && resultsMessageId) {
-                  // PDF 처리 로직 (기존과 동일)
+                  // PDF 처리 - 페이지 파싱
                   if (data.content.includes("📄 페이지")) {
                     const pageMatch = data.content.match(/페이지 (\d+)/);
                     if (pageMatch) {
@@ -670,6 +756,13 @@ export function ChatArea({
                       pdfPages.push(newPage);
                       processedPages++;
                       
+                      // 프로그레스 상태 업데이트 (실시간)
+                      setPdfProgress(prev => ({
+                        ...prev,
+                        processedPages: processedPages
+                      }));
+                      
+                      // 메시지 업데이트
                       setMessages(currentMessages =>
                         currentMessages.map(msg => {
                           if (msg.id === progressMessageId && msg.pdfProgress) {
@@ -697,6 +790,7 @@ export function ChatArea({
                   // 일반 이미지 처리
                   fullContent += data.content;
                   const imageMessageId = messages.length + 2;
+
                   setMessages((currentMessages) =>
                     currentMessages.map((msg) =>
                       msg.id === imageMessageId
@@ -708,6 +802,14 @@ export function ChatArea({
               }
 
               if (data.is_streaming === false) {
+                // 🆕 조기 종료 방지 - 실제 완료 신호인지 확인
+                if (isPdf && !data.content?.includes('📊 처리 완료 요약')) {
+                  // PDF 처리 중이고 완료 요약이 없으면 계속 진행
+                  console.log("Ignoring premature is_streaming: false");
+                  continue;
+                }
+                
+                console.log("Stream completed");
                 if (isPdf && progressMessageId) {
                   setMessages(currentMessages =>
                     currentMessages.map(msg => {
@@ -724,17 +826,18 @@ export function ChatArea({
                       return msg;
                     })
                   );
+                  
+                  setPdfProgress(prev => ({ ...prev, isProcessing: false }));
                 }
                 setIsStreaming(false);
-                isStreamingComplete = true; // ← 수정: 플래그 설정
-                break; // ← 수정: for문 탈출
+                isStreamingComplete = true;
+                break;
               }
             } catch (e) {
               console.error("JSON 파싱 오류:", e, line);
             }
           }
           
-          // ← 추가: for문에서 break가 호출되면 while문도 탈출
           if (isStreamingComplete) {
             break;
           }
@@ -767,6 +870,7 @@ export function ChatArea({
           : "파일 분석 중 오류가 발생했습니다"
       );
       setIsStreaming(false);
+      setPdfProgress(prev => ({ ...prev, isProcessing: false }));
     } finally {
       setIsLoading(false);
     }
@@ -1562,10 +1666,28 @@ export function ChatArea({
           </Button>
         </div>
         {selectedFile && (
-          <p className="text-xs text-center text-gray-500 dark:text-muted-foreground mt-2">
-            선택된 {selectedFile.type === "application/pdf" ? "PDF" : "이미지"}: {selectedFile.name} (
-            {(selectedFile.size / (1024 * 1024)).toFixed(2)}MB)
-          </p>
+          <div className="text-xs text-center text-gray-500 dark:text-muted-foreground mt-2">
+            <p>
+              선택된 {selectedFile.type === "application/pdf" ? "PDF" : "이미지"}: {selectedFile.name} (
+              {(selectedFile.size / (1024 * 1024)).toFixed(2)}MB)
+            </p>
+            {/* 🆕 PDF 프로그레스 정보 추가 */}
+            {selectedFile.type === "application/pdf" && pdfProgress.isProcessing && (
+              <div className="mt-2">
+                <div className="flex justify-center items-center gap-2 mb-1">
+                  <span>처리 중: {pdfProgress.processedPages}/{pdfProgress.totalPages} 페이지</span>
+                </div>
+                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                  <div 
+                    className="bg-orange-500 h-2 rounded-full transition-all duration-300" 
+                    style={{ 
+                      width: `${pdfProgress.totalPages > 0 ? (pdfProgress.processedPages / pdfProgress.totalPages) * 100 : 0}%` 
+                    }}
+                  ></div>
+                </div>
+              </div>
+            )}
+          </div>
         )}
         {isSearchMode && (
           <p className="text-xs text-center text-orange-500 mt-2">

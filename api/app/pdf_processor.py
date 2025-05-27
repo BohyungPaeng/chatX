@@ -118,8 +118,9 @@ class PDFBatchProcessor:
             analysis_request = ImageAnalysisRequest(
                 image_url=image_url,
                 prompt=f"{sys} 해당 페이지 {page_num})의 텍스트를 정확하게 추출해주세요. 표, 목록, 제목 등의 구조를 유지하면서 읽기 쉽게 정리해주세요.",
-                model="gpt-4o",
-                max_tokens=1000
+                model="gpt-4.1-2025-04-14",
+                # model="gpt-4o",
+                max_tokens=2048,
             )
             
             # 비동기 함수 동기적 호출
@@ -278,6 +279,9 @@ class PDFBatchProcessor:
             yield "❌ PDF에서 페이지를 찾을 수 없습니다."
             return
         
+        # 🆕 JSON 형태로 초기 프로그레스 정보 전송
+        yield f"PROGRESS_DATA:{{\"type\":\"init\",\"total_pages\":{self.total_pages}}}"
+        
         yield f"📄 PDF 문서 분석을 시작합니다 (총 {self.total_pages}페이지)\n\n"
         
         # 1. 페이지 데이터 생성
@@ -306,9 +310,12 @@ class PDFBatchProcessor:
             page_numbers = list(range(batch_start, batch_end + 1))
             batch_count += 1
             
+            # 🆕 배치 시작시 프로그레스 업데이트 전송
+            yield f"PROGRESS_DATA:{{\"type\":\"update\",\"processed_pages\":{self.processed_pages},\"total_pages\":{self.total_pages}}}"
+            
             yield f"📋 배치 {batch_count}/{total_batches} 처리 중: 페이지 {batch_start}-{batch_end}\n\n"
             
-            # 🆕 배치 내부 실시간 스트리밍 처리
+            # 배치 내부 실시간 스트리밍 처리
             try:
                 # 페이지별 실시간 결과를 그대로 전달
                 for page_result in self.process_batch_streaming(page_numbers):
@@ -324,6 +331,9 @@ class PDFBatchProcessor:
         # 처리 완료 요약
         processing_time = time.time() - self.start_time
         completed = self.processed_pages >= self.total_pages
+        
+        # 🆕 최종 프로그레스 완료 전송
+        yield f"PROGRESS_DATA:{{\"type\":\"complete\",\"processed_pages\":{self.processed_pages},\"total_pages\":{self.total_pages}}}"
         
         yield f"## 📊 처리 완료 요약\n\n"
         yield f"- 총 페이지: {self.total_pages}페이지\n"

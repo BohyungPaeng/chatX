@@ -94,7 +94,7 @@ async def generate_chat_response(request: ChatRequest) -> ChatResponse:
         
         # 모델 ID 매핑 (필요한 경우)
         model_mapping = {
-            "gpt-4.1": "gpt-4.1",
+            "gpt-4.1": "gpt-4.1-2025-04-14",
             "gpt-4o": "gpt-4.1",
             "o4-mini": "gpt-4.1",
             "o3": "gpt-3.5-turbo"
@@ -219,6 +219,8 @@ async def analyze_image(request: ImageAnalysisRequest) -> ImageAnalysisResponse:
             "total_tokens": response.usage.total_tokens
         }
         
+        print(f"Request max_tokens: {request.max_tokens}")
+        print(f"Response tokens used: {response.usage.completion_tokens}")
         return ImageAnalysisResponse(
             response=content,
             model=model,

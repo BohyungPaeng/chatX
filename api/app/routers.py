@@ -16,14 +16,21 @@ from .pdf_processor import PDFBatchProcessor, PDF_BATCH_SIZE, PDF_PROCESSING_TIM
 async def pdf_streaming_generator(processor: PDFBatchProcessor):
     """
     PDF 배치 처리 결과를 스트리밍 형식으로 변환
-    기존 generate_streaming_response와 동일한 형식 사용
+    프로그레스 정보도 함께 전송
     """
     try:
         for text_chunk in processor.process_pdf_streaming():
-            # 기존 스트리밍 형식과 동일하게 변환
+            # 🆕 프로그레스 데이터 처리
+            if text_chunk.startswith("PROGRESS_DATA:"):
+                progress_json = text_chunk.replace("PROGRESS_DATA:", "")
+                import json
+                progress_data = json.loads(progress_json)
+                yield f"data: {json.dumps(progress_data)}\n\n"
+                continue
+            
+            # 기존 텍스트 콘텐츠 처리
             yield f"data: {json.dumps({'content': text_chunk, 'is_streaming': True, 'model': 'gpt-4o'})}\n\n"
         
-        # 스트리밍 완료 신호
         yield f"data: {json.dumps({'content': '', 'is_streaming': False, 'model': 'gpt-4o'})}\n\n"
         yield f"data: [DONE]\n\n"
         
