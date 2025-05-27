@@ -623,34 +623,37 @@ export function ChatArea({
         let buffer = "";
         let pdfPages: PDFPage[] = [];
         let processedPages = 0;
+        let isStreamingComplete = false; // ← 추가: 완료 플래그
         const startTime = Date.now();
 
-        while (true) {
+        while (true && !isStreamingComplete) { // ← 추가: 완료 조건
           const { value, done } = await reader.read();
           if (done) break;
-        
+
           const chunk = decoder.decode(value, { stream: true });
           buffer += chunk;
-        
+
           const lines = buffer.split("\n\n");
           buffer = lines.pop() || "";
-        
+
           for (const line of lines) {
             if (line.trim() === "") continue;
+            
             if (line.includes("[DONE]")) {
               setIsStreaming(false);
-              continue;
+              isStreamingComplete = true; // ← 수정: 플래그 설정
+              break; // ← 수정: for문 탈출
             }
-        
+
             try {
               const jsonStr = line.replace(/^data: /, "").trim();
               if (!jsonStr) continue;
-        
+
               const data = JSON.parse(jsonStr);
-        
+
               if (data.content) {
                 if (isPdf && progressMessageId && resultsMessageId) {
-                  // PDF 처리 - 더 간단한 매칭으로 수정
+                  // PDF 처리 로직 (기존과 동일)
                   if (data.content.includes("📄 페이지")) {
                     const pageMatch = data.content.match(/페이지 (\d+)/);
                     if (pageMatch) {
@@ -667,7 +670,6 @@ export function ChatArea({
                       pdfPages.push(newPage);
                       processedPages++;
                       
-                      // 즉시 상태 업데이트
                       setMessages(currentMessages =>
                         currentMessages.map(msg => {
                           if (msg.id === progressMessageId && msg.pdfProgress) {
@@ -692,10 +694,9 @@ export function ChatArea({
                     }
                   }
                 } else {
-                  // 일반 이미지 처리 - 기존 로직 복원
+                  // 일반 이미지 처리
                   fullContent += data.content;
                   const imageMessageId = messages.length + 2;
-        
                   setMessages((currentMessages) =>
                     currentMessages.map((msg) =>
                       msg.id === imageMessageId
@@ -705,7 +706,7 @@ export function ChatArea({
                   );
                 }
               }
-        
+
               if (data.is_streaming === false) {
                 if (isPdf && progressMessageId) {
                   setMessages(currentMessages =>
@@ -725,10 +726,17 @@ export function ChatArea({
                   );
                 }
                 setIsStreaming(false);
+                isStreamingComplete = true; // ← 수정: 플래그 설정
+                break; // ← 수정: for문 탈출
               }
             } catch (e) {
               console.error("JSON 파싱 오류:", e, line);
             }
+          }
+          
+          // ← 추가: for문에서 break가 호출되면 while문도 탈출
+          if (isStreamingComplete) {
+            break;
           }
         }
       } catch (error) {
