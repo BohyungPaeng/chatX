@@ -108,10 +108,16 @@ class PDFBatchProcessor:
             if not image_url.startswith('data:'):
                 image_url = f"data:image/png;base64,{image_url}"
             
-            # 2. 기존 analyze_image 함수 사용
+            # 2. 기존 analyze_image 함수 사용 (가드레일 우회 프롬프트)
+            sys = """Your task is to interpret the unstructured text as precisely as possible and convert it into well-organized, readable format.
+            Since the text may be recognized from incomplete OCR engine, the order and structure of the original text may be mixed up, and there may be some potential typos.
+            Identify all text elements, paragraphs, headings, lists, tables, or any textual content mentioned in the image and extract them accurately.
+            Preserve the original language and structure as much as possible. Do not translate or modify the content unnecessarily.
+            The resulting output should provide clear, structured information exactly as presented in the original document.
+            """
             analysis_request = ImageAnalysisRequest(
                 image_url=image_url,
-                prompt=f"이 PDF 페이지(페이지 {page_num})의 모든 텍스트를 정확하게 추출해주세요. 표, 목록, 제목 등의 구조를 유지하면서 읽기 쉽게 정리해주세요.",
+                prompt=f"{sys} 해당 페이지 {page_num})의 텍스트를 정확하게 추출해주세요. 표, 목록, 제목 등의 구조를 유지하면서 읽기 쉽게 정리해주세요.",
                 model="gpt-4o",
                 max_tokens=1000
             )
@@ -206,10 +212,59 @@ class PDFBatchProcessor:
         print(f"Batch completed: {len(batch_results)} pages processed")
         return batch_results
     
+    def process_batch_streaming(self, page_numbers: List[int]):
+        """
+        배치 단위로 페이지들을 병렬 처리하면서 실시간 스트리밍
+        완료되는 페이지마다 즉시 yield
+        
+        Args:
+            page_numbers: 처리할 페이지 번호 리스트 (1-based)
+        
+        Yields:
+            str: 완료된 페이지 텍스트 또는 상태 메시지
+        """
+        print(f"Processing batch: pages {page_numbers}")
+        
+        max_workers = min(len(page_numbers), 4)  # 최대 4개 워커
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 페이지별 처리 작업 제출
+            futures = {
+                executor.submit(self.process_single_page, page_num): page_num
+                for page_num in page_numbers
+            }
+            
+            print(f"Submitted {len(futures)} page processing tasks")
+            
+            # 완료되는 순서대로 결과 수집 및 실시간 스트리밍
+            for future in as_completed(futures):
+                try:
+                    result = future.result(timeout=60)  # 60초 타임아웃
+                    page_num = result['page_number']
+                    
+                    if result['success']:
+                        text_content = result['text_content']
+                        # 즉시 스트리밍 출력
+                        yield f"## 📄 페이지 {page_num}\n\n{text_content}\n\n---\n\n"
+                    else:
+                        error_msg = result.get('error', '알 수 없는 오류')
+                        yield f"## ❌ 페이지 {page_num} 처리 실패\n\n오류: {error_msg}\n\n---\n\n"
+                    
+                except Exception as e:
+                    page_num = futures[future]
+                    print(f"Error processing page {page_num}: {str(e)}")
+                    
+                    with self.lock:
+                        self.processed_pages += 1
+                    
+                    yield f"## ❌ 페이지 {page_num} 처리 중단\n\n오류: {str(e)}\n\n---\n\n"
+        
+        print(f"Batch completed: {len(page_numbers)} pages processed")
+
     def process_pdf_streaming(self):
         """
         PDF를 배치 단위로 처리하면서 실시간으로 결과를 스트리밍
-        Generator 방식으로 처리 완료시마다 텍스트 yield
+        배치 내부에서도 페이지별 실시간 출력
         
         Yields:
             str: 처리된 페이지 텍스트 또는 상태 메시지
@@ -253,28 +308,13 @@ class PDFBatchProcessor:
             
             yield f"📋 배치 {batch_count}/{total_batches} 처리 중: 페이지 {batch_start}-{batch_end}\n\n"
             
-            # 배치 처리 실행
+            # 🆕 배치 내부 실시간 스트리밍 처리
             try:
-                batch_results = self.process_batch(page_numbers)
+                # 페이지별 실시간 결과를 그대로 전달
+                for page_result in self.process_batch_streaming(page_numbers):
+                    yield page_result
                 
-                # 배치 결과를 페이지 순서대로 스트리밍
-                for result in sorted(batch_results, key=lambda x: x.get('page_number', 0)):
-                    page_num = result['page_number']
-                    
-                    if result['success']:
-                        text_content = result['text_content']
-                        # 텍스트 미리보기 (콘솔용)
-                        preview_text = text_content[:100] + "..." if len(text_content) > 100 else text_content
-                        print(f"✅ Page {page_num} completed: {preview_text}")
-                        
-                        # 스트리밍용 전체 텍스트
-                        yield f"## 📄 페이지 {page_num}\n\n{text_content}\n\n---\n\n"
-                    else:
-                        error_msg = result.get('error', '알 수 없는 오류')
-                        print(f"❌ Page {page_num} failed: {error_msg}")
-                        yield f"## ❌ 페이지 {page_num} 처리 실패\n\n오류: {error_msg}\n\n---\n\n"
-                
-                yield f"✅ 배치 {batch_count} 완료 ({len(batch_results)}페이지 처리)\n\n"
+                yield f"✅ 배치 {batch_count} 완료\n\n"
                 
             except Exception as e:
                 print(f"Error processing batch {batch_count}: {str(e)}")
