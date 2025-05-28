@@ -132,7 +132,7 @@ class PDFBatchProcessor:
                 image_url = f"data:image/png;base64,{image_url}"
             
             # 2. 기존 analyze_image 함수 사용 (가드레일 우회 프롬프트)
-            sys = """Your task is to interpret the unstructured text as precisely as possible and convert it into well-organized, readable format.
+            ocr_system_prompt = """Your task is to interpret the unstructured text as precisely as possible and convert it into well-organized, readable format.
             Since the text may be recognized from incomplete OCR engine, the order and structure of the original text may be mixed up, and there may be some potential typos.
             Identify all text elements, paragraphs, headings, lists, tables, or any textual content mentioned in the image and extract them accurately.
             Preserve the original language and structure as much as possible. Do not translate or modify the content unnecessarily.
@@ -140,7 +140,8 @@ class PDFBatchProcessor:
             """
             analysis_request = ImageAnalysisRequest(
                 image_url=image_url,
-                prompt=f"{sys} 해당 페이지 {page_num})의 텍스트를 정확하게 추출해주세요. 표, 목록, 제목 등의 구조를 유지하면서 읽기 쉽게 정리해주세요.",
+                prompt=f"해당 페이지 ({page_num})의 텍스트를 정확하게 추출해주세요. 표, 목록, 제목 등의 구조를 유지하면서 읽기 쉽게 정리해주세요.",
+                system_prompt=ocr_system_prompt,
                 # model="gpt-4o",
                 # model="gpt-4.1",
                 model=self.model_name,

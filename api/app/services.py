@@ -197,7 +197,6 @@ async def analyze_image(request: ImageAnalysisRequest) -> ImageAnalysisResponse:
                 "prompt": request.prompt or "이 이미지에 대해 자세히 설명해주세요.",
                 "max_tokens": request.max_tokens
             }
-            print(request.prompt)
             
             await flow.run_async(shared)
             
@@ -243,9 +242,11 @@ async def analyze_image(request: ImageAnalysisRequest) -> ImageAnalysisResponse:
         
     except Exception as e:
         error_message = f"Error in analyze_image"
-        print(f"analyze_image error: {str(e)}")
+        print(f"analyze_image error: {type(e).__name__}: {str(e)}")
         return ImageAnalysisResponse(
-            response=error_message, model=model, usage={"error": str(e)}
+            response=error_message, 
+            model=model, 
+            usage={"error": str(e), "error_type": type(e).__name__}
         )
 
 async def analyze_image_streaming(request: ImageAnalysisRequest):

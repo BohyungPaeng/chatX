@@ -14,23 +14,25 @@ class ImageAnalysisNode(AsyncNode):
         self.model = model
 
     async def prep_async(self, shared: Dict[str, Any]) -> Dict[str, Any]:
+        # 기본 시스템 프롬프트 (OCR용이 아닌 일반적인 이미지 분석 )
+        default_system_prompt = "You are an expert image analysis assistant. Analyze the image accurately and provide helpful insights."
+        
         return {
             "image_url": shared.get("image_url"),
-            "prompt": shared.get("prompt", ""),
+            "user_prompt": shared.get("prompt", ""),
+            "system_prompt": shared.get("system_prompt", default_system_prompt),
             "max_tokens": shared.get("max_tokens", 500)
         }
 
     async def exec_async(self, prep_res: Dict[str, Any]) -> Dict[str, Any]:
-        print(f"PWC GPT Image Analysis - Model: {self.model.default_model}")
-        print(f"Image URL length: {len(prep_res['image_url']) if prep_res['image_url'] else 0}")
-        
-        # PWC GPT는 이미지 URL을 content 배열로 처리해야 함
+
+        # print(f"[TEMP DEBUG] prep_res: {prep_res}")
         messages = [
-            {"role": "system", "content": "You are an expert image analysis assistant."},
+            {"role": "system", "content": prep_res['system_prompt']},
             {
                 "role": "user", 
                 "content": [
-                    {"type": "text", "text": prep_res['prompt']},
+                    {"type": "text", "text": prep_res['user_prompt']},
                     {"type": "image_url", "image_url": {"url": prep_res['image_url']}}
                 ]
             }
