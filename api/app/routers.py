@@ -14,24 +14,23 @@ router = APIRouter()
 
 from .pdf_processor import PDFBatchProcessor, PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT, PDF_MAX_FILE_SIZE
 
+
 @router.post("/process-pdf-batch")
-def process_pdf_in_batches(
+async def process_pdf_in_batches(
     file: UploadFile = File(...),
-    model: str = Form("gpt-4o")
+    prompt: str = Form("PDF 문서를 분석해주세요."),
+    model: str = Form("azure.gpt-4o-2024-11-20"),
+    force_image_processing: bool = Form(False),
+    stream: bool = Form(True)  # upload-image와 동일한 패턴
 ):
     """
-    PDF 파일을 배치 단위로 처리하여 스트리밍 응답 반환
-    
-    Args:
-        file: 업로드된 PDF 파일
-        extract_all_pages: 모든 페이지 추출 여부
-    
-    Returns:
-        StreamingResponse: 실시간 스트리밍 응답
+    PDF 파일을 처리하여 응답 반환
+    readable 여부에 따라 PyMuPDF 직접 추출 또는 이미지 변환 방식 선택
+    stream 파라미터로 스트리밍/일반 응답 선택
     """
     try:
-        print(f"=== PDF Streaming Processing Started ===")
-        print(f"File: {file.filename}")
+        print(f"=== PDF Processing Started ===")
+        print(f"File: {file.filename}, Model: {model}, Force Image: {force_image_processing}, Stream: {stream}")
         
         # 파일 타입 검증
         if not file.filename.lower().endswith('.pdf'):
@@ -42,8 +41,6 @@ def process_pdf_in_batches(
         file_size = file.file.tell()
         file.file.seek(0)
         
-        print(f"File size: {file_size // (1024*1024)}MB")
-        
         if file_size > PDF_MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=400, 
@@ -51,113 +48,176 @@ def process_pdf_in_batches(
             )
         
         # 파일 내용 읽기
-        pdf_content = file.file.read()
+        pdf_content = await file.read()
         print(f"PDF content loaded: {len(pdf_content)} bytes")
         
-        # PDFBatchProcessor 생성
-        processor = PDFBatchProcessor(pdf_content, file.filename, model_name=model)
-        print("PDFBatchProcessor created for streaming")
+        # 1단계: PDF 처리 방식 결정
+        combined_text = ""
+        processing_method = ""
+        use_realtime_streaming = False  # 실시간 스트리밍 사용 여부
         
-        # 스트리밍 응답 반환 (기존 services.py 방식과 동일)
-        return StreamingResponse(
-            processor.pdf_streaming_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Content-Type": "text/event-stream"
-            }
-        )
+        if not force_image_processing:
+            from .pdf_processor import enhanced_pdf_validation, extract_text_from_readable_pdf
+            validation = enhanced_pdf_validation(pdf_content)
+            
+            if not validation['is_valid']:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"PDF 파일이 유효하지 않습니다: {validation.get('error', 'Unknown error')}"
+                )
+            
+            is_readable = validation['is_readable']
+            print(f"PDF validation: readable={is_readable}, score={validation.get('language_score', 'N/A')}")
+            
+            if is_readable:
+                # readable: PyMuPDF 직접 텍스트 추출
+                print("Using readable PDF processing")
+                extracted_pages = extract_text_from_readable_pdf(pdf_content, file.filename)
+                
+                if not extracted_pages:
+                    raise HTTPException(status_code=500, detail="텍스트 추출에 실패했습니다.")
+                
+                combined_text = "\n\n".join([
+                    f"=== 페이지 {page['page_number']} ===\n{page['text_content']}"
+                    for page in extracted_pages
+                    if page.get('text_content', '').strip()
+                ])
+                processing_method = "direct_text_extraction"
         
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"Critical error in PDF streaming processing: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"PDF 스트리밍 처리 중 오류: {str(e)}")
+        if not combined_text:  # readable하지 않은 경우 또는 강제 이미지 처리
+            print("Using image PDF processing")
+            from .pdf_processor import PDFBatchProcessor
+            
+            processor = PDFBatchProcessor(pdf_content, file.filename, model)
+            
+            if stream:
+                # 스트리밍: 실시간 배치 처리 + 채팅 응답을 연결
+                print("Using real-time streaming with chat response")
+                use_realtime_streaming = True
+                
+                async def combined_pdf_streaming():
+                    # 1단계: 실시간 배치 처리 스트리밍
+                    batch_text = ""
+                    async for chunk in processor.pdf_streaming_generator():
+                        # 배치 처리 결과를 수집하면서 스트리밍
+                        if chunk.startswith('data: '):
+                            data_part = chunk[6:].split('\n\n')[0]
+                            try:
+                                data = json.loads(data_part)
+                                if data.get('content'):
+                                    batch_text += data['content']
+                            except:
+                                pass
+                        yield chunk
+                    
+                    # 2단계: 배치 처리 완료 후 채팅 응답
+                    if batch_text.strip():
+                        yield f"data: {json.dumps({'content': '\\n\\n🤖 **AI 분석 결과:**\\n\\n', 'is_streaming': True, 'model': model})}\n\n"
+                        
+                        # ChatRequest 생성
+                        system_message = f"""당신은 PDF 문서 분석 전문가입니다. 
+다음 PDF 문서({file.filename})의 내용을 바탕으로 사용자의 질문에 정확하고 자세하게 답변해주세요.
 
-@router.post("/process-pdf-batch-nostream")
-def process_pdf_in_batches_nostream(
-    file: UploadFile = File(...),
-    extract_all_pages: bool = Form(True),
-    model: str = Form("gpt-4o"),
-):
-    """
-    PDF 파일을 배치 단위로 처리하여 일반 응답 반환 (기존 방식 호환용)
-    
-    Args:
-        file: 업로드된 PDF 파일
-        extract_all_pages: 모든 페이지 추출 여부
-    
-    Returns:
-        Dict: 처리 결과 및 추출된 텍스트 데이터
-    """
-    try:
-        print(f"=== PDF Batch Processing Started (Old Method) ===")
-        print(f"File: {file.filename}")
+문서 처리 방식: image_ocr_extraction
+문서 내용:
+{batch_text}
+
+답변 시 문서에서 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
+                        
+                        chat_request = ChatRequest(
+                            messages=[
+                                ChatMessage(role="system", content=system_message),
+                                ChatMessage(role="user", content=prompt)
+                            ],
+                            model=model,
+                            temperature=0.7,
+                            max_tokens=1000,
+                            stream=True
+                        )
+                        
+                        # 채팅 응답 스트리밍
+                        stream_iterator = await generate_streaming_response(chat_request)
+                        async for chat_chunk in stream_iterator:
+                            yield chat_chunk
+                    else:
+                        yield f"data: {json.dumps({'content': '\\n\\n❌ 추출된 텍스트가 없어 AI 분석을 수행할 수 없습니다.', 'is_streaming': False, 'model': model})}\n\n"
+                        yield f"data: [DONE]\\n\\n"
+                
+                return StreamingResponse(
+                    combined_pdf_streaming(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "Content-Type": "text/event-stream"
+                    }
+                )
+            else:
+                # 일반 응답: 배치 처리 완료 후 결과 반환
+                results, completed = processor.process_pdf_in_batches()
+                
+                if not results:
+                    raise HTTPException(status_code=500, detail="PDF 페이지 처리에 실패했습니다.")
+                
+                combined_text = "\n\n".join([
+                    f"=== 페이지 {page.get('page_number', 'N/A')} ===\n{page.get('text_content', '')}"
+                    for page in results
+                    if page.get('success') and page.get('text_content', '').strip()
+                ])
+                processing_method = "image_ocr_extraction"
         
-        # 파일 타입 검증
-        if not file.filename.lower().endswith('.pdf'):
-            raise HTTPException(status_code=400, detail="PDF 파일만 지원됩니다.")
-        
-        # 파일 크기 검증
-        file.file.seek(0, 2)
-        file_size = file.file.tell()
-        file.file.seek(0)
-        
-        print(f"File size: {file_size // (1024*1024)}MB")
-        
-        if file_size > PDF_MAX_FILE_SIZE:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"파일 크기가 너무 큽니다. 최대 {PDF_MAX_FILE_SIZE // (1024*1024)}MB까지 지원합니다."
+        # 2단계: 일반 응답 (readable PDF 또는 non-readable PDF의 non-stream)
+        if not use_realtime_streaming:
+            if not combined_text.strip():
+                raise HTTPException(status_code=500, detail="추출된 텍스트가 없습니다.")
+            
+            # 공통 시스템 메시지 생성 (중복 제거)
+            system_message = f"""당신은 PDF 문서 분석 전문가입니다. 
+다음 PDF 문서({file.filename})의 내용을 바탕으로 사용자의 질문에 정확하고 자세하게 답변해주세요.
+
+문서 처리 방식: {processing_method}
+문서 내용:
+{combined_text}
+
+답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
+            
+            chat_request = ChatRequest(
+                messages=[
+                    ChatMessage(role="system", content=system_message),
+                    ChatMessage(role="user", content=prompt)
+                ],
+                model=model,
+                temperature=0.7,
+                max_tokens=1000,
+                stream=stream
             )
-        
-        # 파일 내용 읽기
-        pdf_content = file.file.read()
-        print(f"PDF content loaded: {len(pdf_content)} bytes")
-        
-        # PDFBatchProcessor 생성 및 실행
-        processor = PDFBatchProcessor(pdf_content, file.filename, model_name=model)
-        print("PDFBatchProcessor created")
-        
-        # 배치 처리 실행 (기존 방식)
-        results, completed = processor.process_pdf_in_batches()
-        print(f"Batch processing finished: {len(results)} results, completed: {completed}")
-        
-        # 성공 통계
-        successful_pages = [r for r in results if r.get('success', False)]
-        failed_pages = [r for r in results if not r.get('success', True)]
-        
-        response_data = {
-            "status": "completed" if completed else "partial",
-            "file_name": file.filename,
-            "total_pages_found": len(results),
-            "successful_extractions": len(successful_pages),
-            "failed_extractions": len(failed_pages),
-            "processing_config": {
-                "batch_size": PDF_BATCH_SIZE,
-                "timeout_seconds": PDF_PROCESSING_TIMEOUT
-            },
-            "extracted_data": results,
-            "summary": {
-                "completed": completed,
-                "success_rate": len(successful_pages) / max(len(results), 1) * 100 if results else 0
-            }
-        }
-        
-        print(f"=== PDF Batch Processing Completed ===")
-        return response_data
+            
+            if stream:
+                # 스트리밍 응답
+                from .services import generate_streaming_response
+                stream_iterator = await generate_streaming_response(chat_request)
+                return StreamingResponse(
+                    stream_iterator,
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "Content-Type": "text/event-stream"
+                    }
+                )
+            else:
+                # 일반 응답
+                from .services import generate_chat_response
+                response = await generate_chat_response(chat_request)
+                return response
         
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Critical error in PDF batch processing: {str(e)}")
+        print(f"Critical error in PDF processing: {str(e)}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"PDF 배치 처리 중 오류: {str(e)}")
-
+        raise HTTPException(status_code=500, detail=f"PDF 처리 중 오류: {str(e)}")
 
 @router.get("/pdf-processing-config")
 def get_pdf_processing_config():
@@ -174,6 +234,7 @@ def get_pdf_processing_config():
         "supported_formats": ["PDF"],
         "processing_method": "ThreadPoolExecutor with batch processing"
     }
+
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
@@ -206,8 +267,7 @@ async def chat(request: ChatRequest):
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
+    
 @router.post("/chat/stream")
 async def chat_stream_post(request: ChatRequest):
     """

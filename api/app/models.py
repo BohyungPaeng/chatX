@@ -17,6 +17,7 @@ class ImageAnalysisRequest(BaseModel):
     
     image_url: Optional[str] = None
     prompt: str
+    system_prompt: Optional[str] = None  # 새로 추가
     model: Optional[str] = None
     max_tokens: int = 1000
     detail: str = "auto"

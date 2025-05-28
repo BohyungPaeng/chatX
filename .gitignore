@@ -31,3 +31,4 @@ __pycache__/
 *.py[cod]
 # api/app/__pycache__/*
 # *.cpython-312.pyc
+.windsurf/rules/chatx.md
