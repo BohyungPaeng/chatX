@@ -13,29 +13,11 @@ import json
 router = APIRouter()
 
 from .pdf_processor import PDFBatchProcessor, PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT, PDF_MAX_FILE_SIZE
-async def pdf_streaming_generator(processor: PDFBatchProcessor):
-    """
-    PDF 배치 처리 결과를 스트리밍 형식으로 변환
-    기존 generate_streaming_response와 동일한 형식 사용
-    """
-    try:
-        for text_chunk in processor.process_pdf_streaming():
-            # 기존 스트리밍 형식과 동일하게 변환
-            yield f"data: {json.dumps({'content': text_chunk, 'is_streaming': True, 'model': 'gpt-4o'})}\n\n"
-        
-        # 스트리밍 완료 신호
-        yield f"data: {json.dumps({'content': '', 'is_streaming': False, 'model': 'gpt-4o'})}\n\n"
-        yield f"data: [DONE]\n\n"
-        
-    except Exception as e:
-        error_message = f"PDF 처리 중 오류가 발생했습니다: {str(e)}"
-        yield f"data: {json.dumps({'content': error_message, 'is_streaming': False, 'error': str(e), 'model': 'gpt-4o'})}\n\n"
-        yield f"data: [DONE]\n\n"
 
 @router.post("/process-pdf-batch")
 def process_pdf_in_batches(
     file: UploadFile = File(...),
-    extract_all_pages: bool = Form(True)
+    model: str = Form("gpt-4o")
 ):
     """
     PDF 파일을 배치 단위로 처리하여 스트리밍 응답 반환
@@ -73,12 +55,12 @@ def process_pdf_in_batches(
         print(f"PDF content loaded: {len(pdf_content)} bytes")
         
         # PDFBatchProcessor 생성
-        processor = PDFBatchProcessor(pdf_content, file.filename)
+        processor = PDFBatchProcessor(pdf_content, file.filename, model_name=model)
         print("PDFBatchProcessor created for streaming")
         
         # 스트리밍 응답 반환 (기존 services.py 방식과 동일)
         return StreamingResponse(
-            pdf_streaming_generator(processor),
+            processor.pdf_streaming_generator(),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -95,10 +77,11 @@ def process_pdf_in_batches(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"PDF 스트리밍 처리 중 오류: {str(e)}")
 
-@router.post("/process-pdf-batch-old")
-def process_pdf_in_batches_old(
+@router.post("/process-pdf-batch-nostream")
+def process_pdf_in_batches_nostream(
     file: UploadFile = File(...),
-    extract_all_pages: bool = Form(True)
+    extract_all_pages: bool = Form(True),
+    model: str = Form("gpt-4o"),
 ):
     """
     PDF 파일을 배치 단위로 처리하여 일반 응답 반환 (기존 방식 호환용)
@@ -136,7 +119,7 @@ def process_pdf_in_batches_old(
         print(f"PDF content loaded: {len(pdf_content)} bytes")
         
         # PDFBatchProcessor 생성 및 실행
-        processor = PDFBatchProcessor(pdf_content, file.filename)
+        processor = PDFBatchProcessor(pdf_content, file.filename, model_name=model)
         print("PDFBatchProcessor created")
         
         # 배치 처리 실행 (기존 방식)

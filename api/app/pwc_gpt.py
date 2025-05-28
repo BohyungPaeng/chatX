@@ -1,37 +1,36 @@
-import environ
-import requests
 import aiohttp
 import json
 import asyncio
 from typing import List, Dict, Optional, Any, Union, AsyncGenerator
+from .config import LITELLM_URL, LITELLM_KEY
 
+# import requests
 # requests의 경고 메시지 비활성화
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
-requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+# from requests.packages.urllib3.exceptions import InsecureRequestWarning
+# requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
-env = environ.Env(DEBUG=(bool, False))
-
-import os
-if not os.environ.get('DJANGO_SETTINGS_MODULE'):
-    # Django 외부에서 실행 중인 경우에만 .env 파일 로드
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-    env.read_env(os.path.join(project_root, '.env'))
+# Django 환경에서 사용할 경우를 위한 주석 처리된 코드
+# import environ
+# env = environ.Env(DEBUG=(bool, False))
+# 
+# import os
+# if not os.environ.get('DJANGO_SETTINGS_MODULE'):
+#     # Django 외부에서 실행 중인 경우에만 .env 파일 로드
+#     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+#     env.read_env(os.path.join(project_root, '.env'))
 
 class AsyncPwCGPTModel:
-    """
-    비동기(async) 방식으로 GPT 모델을 호출하는 클래스.
-    """
+    """비동기(async) 방식으로 GPT 모델을 호출하는 클래스."""
     
-    def __init__(self, default_model_name, logger=None):
-        """
-        Args:
-            model_name: 사용할 모델 이름
-            logger: 로깅을 위한 로거 인스턴스 (옵션)
-        """
+    def __init__(self, default_model_name: str, logger=None):
         self.default_model = default_model_name
-        self.base_url = env("LITELLM_URL", default="https://genai-sharedservice-americas.pwcinternal.com")
-        self.api_key = env("LITELLM_KEY")
+        self.base_url = LITELLM_URL
+        self.api_key = LITELLM_KEY
         self.logger = logger
+        
+        # Django 환경에서 사용할 경우의 주석 처리된 코드
+        # self.base_url = env("LITELLM_URL", default="https://genai-sharedservice-americas.pwcinternal.com")
+        # self.api_key = env("LITELLM_KEY")
         
     async def health_check(self) -> int:
         """

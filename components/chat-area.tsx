@@ -307,12 +307,13 @@ export function ChatArea({
   const models: Model[] = [
     { id: "gpt-4.1", name: "GPT-4.1" },
     { id: "gpt-4o", name: "GPT-4o" },
+    { id: "azure.gpt-4o-2024-11-20", name: "PWCGPT-4o" },
     { id: "o4-mini", name: "O4-mini" },
     { id: "o3", name: "O3" },
   ];
 
-  // 선택된 모델 상태
-  const [selectedModel, setSelectedModel] = useState<Model>(models[0]);
+  // 선택된 모델 상태 - 기본값을 PWCGPT-4o로 변경
+  const [selectedModel, setSelectedModel] = useState<Model>(models[2]); // azure.gpt-4o-2024-11-20
 
   // 이미지가 화면에 표시되고 있는지 확인하는 함수
   const isImageVisible = (): boolean => {

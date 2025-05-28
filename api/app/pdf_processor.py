@@ -5,6 +5,7 @@ PDF 배치 처리 - 간결하고 아름다운 버전
 """
 
 import time
+import json
 import fitz
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Tuple
@@ -14,7 +15,7 @@ from .models import ImageAnalysisRequest
 
 # PDF 처리 관련 상수
 PDF_BATCH_SIZE = 8  # 배치당 처리할 페이지 수
-PDF_PROCESSING_TIMEOUT = 180  # 처리 타임아웃 (초)
+PDF_PROCESSING_TIMEOUT = 10  # 처리 타임아웃 (초)
 PDF_MAX_FILE_SIZE = 50 * 1024 * 1024  # 최대 파일 크기 (50MB)
 TOP_K_MAX = 10  # 검색 결과 최대 개수
 TOP_K_MIN = 1   # 검색 결과 최소 개수
@@ -32,9 +33,10 @@ AVAILABLE_MODELS = [
 class PDFBatchProcessor:
     """PDF 배치 처리를 담당하는 클래스"""
     
-    def __init__(self, pdf_content: bytes, filename: str):
+    def __init__(self, pdf_content: bytes, filename: str, model_name: str):
         self.pdf_content = pdf_content
         self.filename = filename
+        self.model_name = model_name
         self.processed_pages = 0
         self.total_pages = 0
         self.lock = threading.Lock()
@@ -90,16 +92,27 @@ class PDFBatchProcessor:
         except Exception as e:
             print(f"Error in create_page_data: {str(e)}")
             return False
-    
+    async def pdf_streaming_generator(self):
+        """
+        PDF 배치 처리 결과를 스트리밍 형식으로 변환
+        기존 generate_streaming_response와 동일한 형식 사용
+        """
+        try:
+            for text_chunk in self.process_pdf_streaming():
+                # self.model 사용
+                yield f"data: {json.dumps({'content': text_chunk, 'is_streaming': True, 'model': self.model_name})}\n\n"
+            
+            # 스트리밍 완료 신호
+            yield f"data: {json.dumps({'content': '', 'is_streaming': False, 'model': self.model_name})}\n\n"
+            yield f"data: [DONE]\n\n"
+            
+        except Exception as e:
+            error_message = f"PDF 처리 중 오류가 발생했습니다: {str(e)}"
+            yield f"data: {json.dumps({'content': error_message, 'is_streaming': False, 'error': str(e), 'model': self.model_name})}\n\n"
+            yield f"data: [DONE]\n\n"
     def process_single_page(self, page_num: int) -> Dict[str, Any]:
         """
         단일 페이지 처리 (기존 services 함수 재사용)
-        
-        Args:
-            page_num: 페이지 번호 (1-based)
-        
-        Returns:
-            Dict: 처리된 페이지 데이터
         """
         try:
             print(f"Processing page {page_num}...")
@@ -130,7 +143,7 @@ class PDFBatchProcessor:
                 prompt=f"{sys} 해당 페이지 {page_num})의 텍스트를 정확하게 추출해주세요. 표, 목록, 제목 등의 구조를 유지하면서 읽기 쉽게 정리해주세요.",
                 # model="gpt-4o",
                 # model="gpt-4.1",
-                model="azure.gpt-4o",
+                model=self.model_name,
                 max_tokens=1000
             )
             
@@ -161,7 +174,7 @@ class PDFBatchProcessor:
             return result
             
         except Exception as e:
-            print(f"Error processing page {page_num}: {str(e)}")
+            print(f"Error processing page {page_num}: {type(e).__name__}: {str(e)}")
             
             with self.lock:
                 self.processed_pages += 1
