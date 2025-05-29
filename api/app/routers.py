@@ -413,16 +413,16 @@ async def image_pdf_streaming_with_cache(
 
 
 @router.post("/chat-with-pdf")
-async def chat_with_pdf(request: dict):
+async def chat_with_pdf(
+    filename: str = Form(...),
+    prompt: str = Form(...),
+    model: str = Form("azure.gpt-4o-2024-11-20"),
+    stream: bool = Form(True)
+):
     """
     글로벌 캐시에서 PDF 텍스트를 가져와서 채팅 응답 생성
     """
     try:
-        filename = request.get("filename", "")
-        prompt = request.get("prompt", "이 PDF 문서를 분석해주세요.")
-        model = request.get("model", "azure.gpt-4o-2024-11-20")
-        stream = request.get("stream", True)
-        
         print(f"=== Chat with PDF Started ===")
         print(f"Filename: {filename}, Model: {model}, Stream: {stream}")
         
@@ -430,7 +430,7 @@ async def chat_with_pdf(request: dict):
         if filename not in GLOBAL_PDF_CACHE:
             raise HTTPException(status_code=400, detail="PDF 텍스트를 찾을 수 없습니다. 먼저 PDF를 분석해주세요.")
         
-        extracted_text = GLOBAL_PDF_CACHE[filename]
+        extracted_text = get_combined_text_from_cache(filename)
         print(f"Found cached text length: {len(extracted_text)}")
         
         # 시스템 메시지 생성
@@ -449,8 +449,8 @@ async def chat_with_pdf(request: dict):
                 ChatMessage(role="user", content=prompt)
             ],
             model=model,
-            temperature=0.7,
-            max_tokens=1000,
+            temperature=0,
+            max_tokens=4092,
             stream=stream
         )
         

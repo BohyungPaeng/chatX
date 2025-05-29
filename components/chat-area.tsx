@@ -507,9 +507,8 @@ export function ChatArea({
         }
       }
   
-      // 상태 초기화
-      setSelectedFile(null);
-      setPreviewUrl(null);
+      // setSelectedFile(null); // 제거됨 (파일 상태 유지)
+      // setPreviewUrl(null); // 제거 (PDF도 미리보기 상태 유지)
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -577,22 +576,23 @@ export function ChatArea({
       }
     }
   };
-  // 이미지 분석 핸들러 수정
+
+  // 이미지/PDF 분석 핸들러 - 파일 타입에 따라 적절한 API 엔드포인트로 분기
   const handleImageAnalysis = async () => {
     try {
       setIsLoading(true);
       setError(null);
-
+      
       // 이미지 파일 또는 URL 확인
       let imageData: string | null = null;
       let imageFile: File | null = null;
-
+      
       // 1. 선택된 파일이 있는 경우
       if (selectedFile) {
         // PDF 지원 확인
         const validTypes = [
           "image/jpeg",
-          "image/png",
+          "image/png", 
           "image/gif",
           "image/webp",
           "application/pdf"
@@ -602,7 +602,7 @@ export function ChatArea({
             "지원되지 않는 파일 형식입니다. 이미지 또는 PDF 파일만 지원합니다."
           );
         }
-
+        
         imageFile = selectedFile;
         try {
           if (selectedFile.type === "application/pdf") {
@@ -631,22 +631,22 @@ export function ChatArea({
         const attachedImage = document.querySelector(
           'img[alt*="Uploaded image"]'
         ) as HTMLImageElement;
-
+        
         if (attachedImage && attachedImage.src) {
           imageData = attachedImage.src;
           console.log(`Debug - Found attached image in DOM`);
         }
       }
-
+      
       // 파일이 없으면 에러
       if (!selectedFile) {
         throw new Error("분석할 파일을 찾을 수 없습니다");
       }
-
+      
       // PDF와 이미지 구분 처리
       const isPdf = selectedFile.type === "application/pdf";
       const fileTypeName = isPdf ? "PDF 문서" : "이미지";
-
+      
       // 사용자 메시지 생성
       const userMessage: Message = {
         id: messages.length + 1,
@@ -654,52 +654,23 @@ export function ChatArea({
         content: input || `이 ${fileTypeName}를 분석해주세요.`,
         imageUrl: isPdf ? undefined : imageData, // PDF는 이미지 URL 없음
       };
-
+      
       // 메시지 목록에 사용자 메시지 추가
       setMessages((prev) => [...prev, userMessage]);
       setInput("");
-
+      
       let newMessageId: number;
-      let progressMessageId: number | null = null;
-      let resultsMessageId: number | null = null;
-
+      
+      // PDF와 이미지에 따른 메시지 구조 분기
       if (isPdf) {
-        // PDF 진행률 메시지 추가
-        progressMessageId = messages.length + 2;
-        const progressMessage: Message = {
-          id: progressMessageId,
+        // PDF 질문 시에는 단순한 시스템 응답 메시지만 추가 (chat-with-pdf용)
+        newMessageId = messages.length + 2;
+        const initialMessage: Message = {
+          id: newMessageId,
           role: "system",
           content: "",
-          messageType: "pdf-progress",
-          pdfProgress: {
-            fileName: selectedFile.name,
-            totalPages: 0,
-            processedPages: 0,
-            isCompleted: false,
-            isError: false,
-            processingTime: 0
-          }
         };
-        
-        // 결과 뷰어 메시지 추가
-        resultsMessageId = messages.length + 3;
-        const resultsMessage: Message = {
-          id: resultsMessageId,
-          role: "system", 
-          content: "",
-          messageType: "pdf-results",
-          pdfPages: [],
-          pdfProgress: {
-            fileName: selectedFile.name,
-            totalPages: 0,
-            processedPages: 0,
-            isCompleted: false,
-            isError: false
-          }
-        };
-
-        setMessages(prev => [...prev, progressMessage, resultsMessage]);
-        newMessageId = resultsMessageId;
+        setMessages((prev) => [...prev, initialMessage]);
       } else {
         // 이미지 처리 - 시스템 메시지 추가 (빈 메시지로 시작)
         newMessageId = messages.length + 2;
@@ -712,51 +683,53 @@ export function ChatArea({
       }
       
       setIsStreaming(true);
-
+      
       // FormData 생성
       const formData = new FormData();
-      formData.append(
-        "prompt",
-        input || `이 ${fileTypeName}에 대해 자세히 설명해주세요.`
-      );
-      formData.append("model", selectedModel.id);
-      formData.append("max_tokens", "1000");
-      formData.append("detail", "auto");
-      formData.append("stream", "true"); // 스트리밍 활성화
-
-      // 이전 대화 컨텍스트 추가 (이미지 없는 메시지만)
-      const conversationHistory = messages
-        .filter((msg) => !msg.imageUrl)
-        .map((msg) => ({
-          role: msg.role,
-          content: msg.content,
-        }));
-      formData.append(
-        "conversation_history",
-        JSON.stringify(conversationHistory)
-      );
-
-      // 파일 추가
-      if (imageFile) {
-        console.log("Uploading as file:", imageFile.name, imageFile.type);
-        formData.append("file", imageFile);
-      } else if (imageData) {
-        console.log("Uploading as base64 image");
-        formData.append("base64_image", imageData);
+      if (isPdf) {
+        // PDF 질문용 간단한 FormData
+        formData.append("filename", selectedFile.name);
+        formData.append("prompt", input || `이 ${fileTypeName}에 대해 자세히 설명해주세요.`);
+        formData.append("model", selectedModel.id);
+        formData.append("stream", "true");
+      } else {
+        // 이미지용 FormData (기존 로직)
+        formData.append(
+          "prompt",
+          input || `이 ${fileTypeName}에 대해 자세히 설명해주세요.`
+        );
+        formData.append("model", selectedModel.id);
+        formData.append("max_tokens", "1000");
+        formData.append("detail", "auto");
+        formData.append("stream", "true");
+        
+        const conversationHistory = messages
+          .filter((msg) => !msg.imageUrl)
+          .map((msg) => ({
+            role: msg.role,
+            content: msg.content,
+          }));
+        formData.append(
+          "conversation_history",
+          JSON.stringify(conversationHistory)
+        );
+        
+        if (imageFile) {
+          formData.append("file", imageFile);
+        } else if (imageData) {
+          formData.append("base64_image", imageData);
+        }
       }
-
-      console.log(`Debug - Sending request with model: ${selectedModel.id}`);
-
+      
       // API 요청
       const controller = new AbortController();
-
       const timeoutId = setTimeout(() => {
         controller.abort();
         setError("API 요청 시간이 초과되었습니다. 다른 모델을 선택해보세요.");
         setIsLoading(false);
         setIsStreaming(false);
       }, timeoutDuration);
-
+      
       try {
         // PDF 파일과 이미지 파일을 구분하여 적절한 엔드포인트로 요청
         const isPdfFile = selectedFile?.type === "application/pdf";
@@ -765,13 +738,17 @@ export function ChatArea({
         console.log(`Sending ${isPdfFile ? 'PDF' : 'image'} to ${endpoint}`);
         
         const response = await fetch(`${API_URL}${endpoint}`, {
-            method: "POST",
-            body: formData,
-            signal: controller.signal,
-          });
+          method: "POST",
+          body: formData,
+          signal: controller.signal,
+        });
+        
         clearTimeout(timeoutId); // 타임아웃 해제
+        
         if (!response.ok) {
-          let errorMessage = "이미지 분석 중 오류가 발생했습니다.";
+          let errorMessage = isPdfFile 
+            ? "PDF 분석 중 오류가 발생했습니다."
+            : "이미지 분석 중 오류가 발생했습니다.";
           try {
             const errorData = await response.json();
             console.error("API error response:", errorData);
@@ -784,38 +761,51 @@ export function ChatArea({
           }
           throw new Error(errorMessage);
         }
+        
         // body가 없으면 에러
         if (!response.body) {
           throw new Error("응답 본문이 없습니다.");
         }
+        
         // 스트리밍 응답 처리
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let fullContent = "";
         let buffer = "";
+        let streamCompleted = false; // ← 완료 플래그 추가
+
         while (true) {
           const { value, done } = await reader.read();
-          if (done) break;
-          // 텍스트 디코딩
+          if (done) {
+            console.log("Stream completed by reader done");
+            setIsStreaming(false);
+            break;
+          }
+
           const chunk = decoder.decode(value, { stream: true });
           buffer += chunk;
-          // 이벤트 스트림 형식 처리 (data: {...}\n\n)
+
           const lines = buffer.split(/\r?\n\r?\n/);
           buffer = lines.pop() || "";
+
           for (const line of lines) {
             if (line.trim() === "") continue;
+            
             if (line.includes("[DONE]")) {
+              console.log("Stream completed by [DONE] marker");
               setIsStreaming(false);
-              continue;
+              streamCompleted = true;
+              break;
             }
+
             try {
-              // "data: " 접두사 제거
               const jsonStr = line.replace(/^data: /, "").trim();
               if (!jsonStr) continue;
+
               const data = JSON.parse(jsonStr);
+
               if (data.content) {
                 fullContent += data.content;
-                // 실시간으로 메시지 업데이트
                 setMessages((currentMessages) =>
                   currentMessages.map((msg) =>
                     msg.id === newMessageId
@@ -824,14 +814,26 @@ export function ChatArea({
                   )
                 );
               }
+
               if (data.is_streaming === false) {
+                console.log("Stream completed by is_streaming=false");
                 setIsStreaming(false);
+                streamCompleted = true;
+                break;
               }
             } catch (e) {
               console.error("JSON 파싱 오류:", e, line);
             }
           }
+          
+          // 스트림이 완료되면 while 루프도 종료
+          if (streamCompleted) {
+            break;
+          }
         }
+
+        console.log("Final stream state: completed");
+        
       } catch (error) {
         // AbortController에 의한 취소 확인
         if (error instanceof Error && error.name === "AbortError") {
@@ -842,26 +844,31 @@ export function ChatArea({
         }
         throw error; // 다른 오류는 상위 catch 블록으로 전달
       }
-      // 요청이 완료되면 상태 초기화
-      setSelectedFile(null);
-      setPreviewUrl(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
+      
+      // 요청이 완료되면 상태 초기화 - PDF 질문 후에는 파일 상태 유지
+      if (!isPdf) {
+        setSelectedFile(null);
+        setPreviewUrl(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
       }
+      // PDF의 경우 파일 상태 유지하여 연속 질문 가능
+      
     } catch (err) {
-      console.error("이미지 분석 오류:", err);
+      console.error("파일 분석 오류:", err);
       setError(
         err instanceof Error
           ? err.message
-          : "이미지 분석 중 오류가 발생했습니다"
+          : "파일 분석 중 오류가 발생했습니다"
       );
       setIsStreaming(false);
     } finally {
       setIsLoading(false);
     }
   };
-    
-    // 메시지 전송 함수 수정 - 웹 검색 지원 추가
+
+  // 메시지 전송 함수 수정 - 웹 검색 지원 추가
   const sendMessage = async () => {
     // 입력 없고 이미지도 없으면 아무 것도 하지 않음
     if (!input.trim() && !(selectedFile || previewUrl)) {
