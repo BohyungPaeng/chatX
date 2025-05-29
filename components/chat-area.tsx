@@ -333,76 +333,250 @@ export function ChatArea({
     ) as HTMLImageElement;
     return !!attachedImage;
   };
-
-  // 파일 선택 핸들러 (PDF 지원 추가)
+  // PDF 파일 업로드 시 자동 실행되는 선행 처리 함수 (add-on 개념)
+  // process-pdf-batch API를 호출하여 PDF를 스트리밍으로 처리하고 진행률 표시
+  const processPDFUpload = async (pdfFile: File) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+  
+      if (!pdfFile || pdfFile.type !== "application/pdf") {
+        throw new Error("PDF 파일이 필요합니다.");
+      }
+  
+      // PDF 진행률 메시지 추가
+      const progressMessageId = messages.length + 1;
+      const progressMessage: Message = {
+        id: progressMessageId,
+        role: "system",
+        content: "",
+        messageType: "pdf-progress",
+        pdfProgress: {
+          fileName: pdfFile.name,
+          totalPages: 0,
+          processedPages: 0,
+          isCompleted: false,
+          isError: false,
+          processingTime: 0
+        }
+      };
+  
+      // 결과 뷰어 메시지 추가
+      const resultsMessageId = messages.length + 2;
+      const resultsMessage: Message = {
+        id: resultsMessageId,
+        role: "system",
+        content: "",
+        messageType: "pdf-results",
+        pdfPages: [],
+        pdfProgress: {
+          fileName: pdfFile.name,
+          totalPages: 0,
+          processedPages: 0,
+          isCompleted: false,
+          isError: false
+        }
+      };
+  
+      setMessages(prev => [...prev, progressMessage, resultsMessage]);
+      setIsStreaming(true);
+  
+      // FormData 생성
+      const formData = new FormData();
+      formData.append("file", pdfFile);
+      formData.append("prompt", "이 PDF 문서를 분석해주세요.");
+      formData.append("model", selectedModel.id);
+      formData.append("force_image_processing", "false");
+      formData.append("stream", "false");
+  
+      // API 요청 (process-pdf-batch)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+        setError("PDF 처리 시간이 초과되었습니다.");
+        setIsLoading(false);
+        setIsStreaming(false);
+      }, timeoutDuration);
+  
+      const response = await fetch(`${API_URL}/process-pdf-batch`, {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      });
+  
+      clearTimeout(timeoutId);
+  
+      if (!response.ok) {
+        throw new Error("PDF 처리에 실패했습니다.");
+      }
+  
+      // 스트리밍 응답 처리 (기존 PDF 로직과 동일)
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let pdfPages: PDFPage[] = [];
+      let processedPages = 0;
+      const startTime = Date.now();
+  
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+  
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+  
+        const lines = buffer.split(/\r?\n\r?\n/);
+        buffer = lines.pop() || "";
+  
+        for (const line of lines) {
+          if (line.trim() === "") continue;
+          
+          if (line.includes("[DONE]")) {
+            setIsStreaming(false);
+            break;
+          }
+  
+          try {
+            const jsonStr = line.replace(/^data: /, "").trim();
+            if (!jsonStr) continue;
+  
+            const data = JSON.parse(jsonStr);
+  
+            if (data.content && data.content.includes("📄 페이지")) {
+              const pageMatch = data.content.match(/페이지 (\d+)/);
+              if (pageMatch) {
+                const pageNum = parseInt(pageMatch[1]);
+                const contentMatch = data.content.match(/📄 페이지 \d+\n\n(.*?)(?=\n\n---|\n\n##|\n\n📊|$)/s);
+                const pageContent = contentMatch ? contentMatch[1] : data.content;
+                
+                const newPage: PDFPage = {
+                  pageNumber: pageNum,
+                  textContent: pageContent,
+                  success: true
+                };
+                
+                pdfPages.push(newPage);
+                processedPages++;
+                
+                setMessages(currentMessages =>
+                  currentMessages.map(msg => {
+                    if (msg.id === progressMessageId && msg.pdfProgress) {
+                      return {
+                        ...msg,
+                        pdfProgress: {
+                          ...msg.pdfProgress,
+                          processedPages: processedPages,
+                          processingTime: Math.floor((Date.now() - startTime) / 1000)
+                        }
+                      };
+                    }
+                    if (msg.id === resultsMessageId) {
+                      return {
+                        ...msg,
+                        pdfPages: [...pdfPages]
+                      };
+                    }
+                    return msg;
+                  })
+                );
+              }
+            }
+  
+            if (data.is_streaming === false) {
+              setMessages(currentMessages =>
+                currentMessages.map(msg => {
+                  if (msg.id === progressMessageId && msg.pdfProgress) {
+                    return {
+                      ...msg,
+                      pdfProgress: {
+                        ...msg.pdfProgress,
+                        isCompleted: true,
+                        processingTime: Math.floor((Date.now() - startTime) / 1000)
+                      }
+                    };
+                  }
+                  return msg;
+                })
+              );
+              setIsStreaming(false);
+              break;
+            }
+          } catch (e) {
+            console.error("JSON 파싱 오류:", e, line);
+          }
+        }
+      }
+  
+      // 상태 초기화
+      setSelectedFile(null);
+      setPreviewUrl(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      if (pdfInputRef.current) {
+        pdfInputRef.current.value = "";
+      }
+  
+    } catch (err) {
+      console.error("PDF 처리 오류:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "PDF 처리 중 오류가 발생했습니다"
+      );
+      setIsStreaming(false);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  // 파일 선택 핸들러 - 이미지/PDF 구분하여 각각 다른 처리 함수로 분기
+  // PDF 선택 시 즉시 processPDFUpload 실행, 이미지 선택 시 미리보기만 생성
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
-
+  
     if (file) {
-      // PDF 지원 추가
+      // 파일 타입 검증 로직 (기존 유지)
       const validTypes = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
       if (!validTypes.includes(file.type)) {
-        setError(
-          "지원되지 않는 파일 형식입니다. 이미지(JPEG, PNG, GIF, WEBP) 또는 PDF 파일만 지원합니다."
-        );
-        if (fileInputRef.current) {
-          fileInputRef.current.value = "";
-        }
-        if (pdfInputRef.current) {
-          pdfInputRef.current.value = "";
-        }
+        setError("지원되지 않는 파일 형식입니다. 이미지(JPEG, PNG, GIF, WEBP) 또는 PDF 파일만 지원합니다.");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        if (pdfInputRef.current) pdfInputRef.current.value = "";
         return;
       }
-
-      // 파일 크기 검증 - 이미지는 25MB, PDF는 50MB 제한
+  
+      // 파일 크기 검증
       const maxSize = file.type === "application/pdf" ? 50 * 1024 * 1024 : 25 * 1024 * 1024;
       if (file.size > maxSize) {
         const limitMB = file.type === "application/pdf" ? "50MB" : "25MB";
         setError(`파일 크기가 너무 큽니다. ${file.type === "application/pdf" ? "PDF는" : "이미지는"} 최대 ${limitMB}까지 지원합니다.`);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = "";
-        }
-        if (pdfInputRef.current) {
-          pdfInputRef.current.value = "";
-        }
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        if (pdfInputRef.current) pdfInputRef.current.value = "";
         return;
       }
-
-      console.log(
-        `File selected: ${file.name}, type: ${file.type}, size: ${(
-          file.size /
-          1024 /
-          1024
-        ).toFixed(2)}MB`
-      );
+  
       setSelectedFile(file);
       setError(null);
-
-      // PDF는 미리보기 생성하지 않음
+  
+      // PDF 파일이면 즉시 선행 add-on 실행 (파일 직접 전달)
       if (file.type === "application/pdf") {
         setPreviewUrl(null);
-        return;
+        processPDFUpload(file); // PDF 전용 선행 처리 함수 호출
+      } else {
+        // 이미지는 미리보기 생성 (기존 로직 유지)
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setPreviewUrl(reader.result as string);
+        };
+        reader.onerror = () => {
+          setError("이미지 파일을 읽는 중 오류가 발생했습니다.");
+          setSelectedFile(null);
+          if (fileInputRef.current) fileInputRef.current.value = "";
+        };
+        reader.readAsDataURL(file);
       }
-
-      // 이미지만 미리보기 생성
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPreviewUrl(reader.result as string);
-      };
-      reader.onerror = () => {
-        setError("이미지 파일을 읽는 중 오류가 발생했습니다.");
-        setSelectedFile(null);
-        if (fileInputRef.current) {
-          fileInputRef.current.value = "";
-        }
-        if (pdfInputRef.current) {
-          pdfInputRef.current.value = "";
-        }
-      };
-      reader.readAsDataURL(file);
     }
   };
-
   // 이미지 분석 핸들러 수정
   const handleImageAnalysis = async () => {
     try {
@@ -575,7 +749,6 @@ export function ChatArea({
 
       // API 요청
       const controller = new AbortController();
-      let response: Response; // 상위 스코프에서 선언
 
       const timeoutId = setTimeout(() => {
         controller.abort();
@@ -587,7 +760,7 @@ export function ChatArea({
       try {
         // PDF 파일과 이미지 파일을 구분하여 적절한 엔드포인트로 요청
         const isPdfFile = selectedFile?.type === "application/pdf";
-        const endpoint = isPdfFile ? "/process-pdf-batch" : "/upload-image";
+        const endpoint = isPdfFile ? "/chat-with-pdf" : "/upload-image";
         
         console.log(`Sending ${isPdfFile ? 'PDF' : 'image'} to ${endpoint}`);
         
@@ -596,11 +769,9 @@ export function ChatArea({
             body: formData,
             signal: controller.signal,
           });
-        
         clearTimeout(timeoutId); // 타임아웃 해제
-
         if (!response.ok) {
-          let errorMessage = "파일 분석 중 오류가 발생했습니다.";
+          let errorMessage = "이미지 분석 중 오류가 발생했습니다.";
           try {
             const errorData = await response.json();
             console.error("API error response:", errorData);
@@ -613,133 +784,52 @@ export function ChatArea({
           }
           throw new Error(errorMessage);
         }
-
         // body가 없으면 에러
         if (!response.body) {
           throw new Error("응답 본문이 없습니다.");
         }
-
         // 스트리밍 응답 처리
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let fullContent = "";
         let buffer = "";
-        let pdfPages: PDFPage[] = [];
-        let processedPages = 0;
-        let isStreamingComplete = false; // ← 추가: 완료 플래그
-        const startTime = Date.now();
-
-        while (true && !isStreamingComplete) { // ← 추가: 완료 조건
+        while (true) {
           const { value, done } = await reader.read();
           if (done) break;
-
+          // 텍스트 디코딩
           const chunk = decoder.decode(value, { stream: true });
           buffer += chunk;
-
+          // 이벤트 스트림 형식 처리 (data: {...}\n\n)
           const lines = buffer.split(/\r?\n\r?\n/);
           buffer = lines.pop() || "";
-
           for (const line of lines) {
             if (line.trim() === "") continue;
-            
             if (line.includes("[DONE]")) {
               setIsStreaming(false);
-              isStreamingComplete = true; // ← 수정: 플래그 설정
-              break; // ← 수정: for문 탈출
+              continue;
             }
-
             try {
+              // "data: " 접두사 제거
               const jsonStr = line.replace(/^data: /, "").trim();
               if (!jsonStr) continue;
-
               const data = JSON.parse(jsonStr);
-
               if (data.content) {
-                if (isPdf && progressMessageId && resultsMessageId) {
-                  // PDF 처리 로직 (기존과 동일)
-                  if (data.content.includes("📄 페이지")) {
-                    const pageMatch = data.content.match(/페이지 (\d+)/);
-                    if (pageMatch) {
-                      const pageNum = parseInt(pageMatch[1]);
-                      const contentMatch = data.content.match(/📄 페이지 \d+\n\n(.*?)(?=\n\n---|\n\n##|\n\n📊|$)/s);
-                      const pageContent = contentMatch ? contentMatch[1] : data.content;
-                      
-                      const newPage: PDFPage = {
-                        pageNumber: pageNum,
-                        textContent: pageContent,
-                        success: true
-                      };
-                      
-                      pdfPages.push(newPage);
-                      processedPages++;
-                      
-                      setMessages(currentMessages =>
-                        currentMessages.map(msg => {
-                          if (msg.id === progressMessageId && msg.pdfProgress) {
-                            return {
-                              ...msg,
-                              pdfProgress: {
-                                ...msg.pdfProgress,
-                                processedPages: processedPages,
-                                processingTime: Math.floor((Date.now() - startTime) / 1000)
-                              }
-                            };
-                          }
-                          if (msg.id === resultsMessageId) {
-                            return {
-                              ...msg,
-                              pdfPages: [...pdfPages]
-                            };
-                          }
-                          return msg;
-                        })
-                      );
-                    }
-                  }
-                } else {
-                  // 일반 이미지 처리
-                  fullContent += data.content;
-                  const imageMessageId = messages.length + 2;
-                  setMessages((currentMessages) =>
-                    currentMessages.map((msg) =>
-                      msg.id === imageMessageId
-                        ? { ...msg, content: fullContent }
-                        : msg
-                    )
-                  );
-                }
+                fullContent += data.content;
+                // 실시간으로 메시지 업데이트
+                setMessages((currentMessages) =>
+                  currentMessages.map((msg) =>
+                    msg.id === newMessageId
+                      ? { ...msg, content: fullContent }
+                      : msg
+                  )
+                );
               }
-
               if (data.is_streaming === false) {
-                if (isPdf && progressMessageId) {
-                  setMessages(currentMessages =>
-                    currentMessages.map(msg => {
-                      if (msg.id === progressMessageId && msg.pdfProgress) {
-                        return {
-                          ...msg,
-                          pdfProgress: {
-                            ...msg.pdfProgress,
-                            isCompleted: true,
-                            processingTime: Math.floor((Date.now() - startTime) / 1000)
-                          }
-                        };
-                      }
-                      return msg;
-                    })
-                  );
-                }
                 setIsStreaming(false);
-                isStreamingComplete = true; // ← 수정: 플래그 설정
-                break; // ← 수정: for문 탈출
               }
             } catch (e) {
               console.error("JSON 파싱 오류:", e, line);
             }
-          }
-          
-          // ← 추가: for문에서 break가 호출되면 while문도 탈출
-          if (isStreamingComplete) {
-            break;
           }
         }
       } catch (error) {
@@ -752,22 +842,18 @@ export function ChatArea({
         }
         throw error; // 다른 오류는 상위 catch 블록으로 전달
       }
-
       // 요청이 완료되면 상태 초기화
       setSelectedFile(null);
       setPreviewUrl(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
-      if (pdfInputRef.current) {
-        pdfInputRef.current.value = "";
-      }
     } catch (err) {
-      console.error("파일 분석 오류:", err);
+      console.error("이미지 분석 오류:", err);
       setError(
         err instanceof Error
           ? err.message
-          : "파일 분석 중 오류가 발생했습니다"
+          : "이미지 분석 중 오류가 발생했습니다"
       );
       setIsStreaming(false);
     } finally {
