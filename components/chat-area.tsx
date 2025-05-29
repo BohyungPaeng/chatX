@@ -575,6 +575,8 @@ export function ChatArea({
 
       // API 요청
       const controller = new AbortController();
+      let response: Response; // 상위 스코프에서 선언
+
       const timeoutId = setTimeout(() => {
         controller.abort();
         setError("API 요청 시간이 초과되었습니다. 다른 모델을 선택해보세요.");
@@ -590,11 +592,11 @@ export function ChatArea({
         console.log(`Sending ${isPdfFile ? 'PDF' : 'image'} to ${endpoint}`);
         
         const response = await fetch(`${API_URL}${endpoint}`, {
-          method: "POST",
-          body: formData,
-          signal: controller.signal,
-        });
-
+            method: "POST",
+            body: formData,
+            signal: controller.signal,
+          });
+        
         clearTimeout(timeoutId); // 타임아웃 해제
 
         if (!response.ok) {
@@ -634,7 +636,7 @@ export function ChatArea({
           const chunk = decoder.decode(value, { stream: true });
           buffer += chunk;
 
-          const lines = buffer.split("\n\n");
+          const lines = buffer.split(/\r?\n\r?\n/);
           buffer = lines.pop() || "";
 
           for (const line of lines) {
@@ -989,7 +991,7 @@ export function ChatArea({
           buffer += chunk;
 
           // 이벤트 스트림 형식 처리 (data: {...}\n\n)
-          const lines = buffer.split("\n\n");
+          const lines = buffer.split(/\r?\n\r?\n/);
           buffer = lines.pop() || "";
 
           for (const line of lines) {

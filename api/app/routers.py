@@ -52,9 +52,10 @@ def process_pdf_in_batches(
         pdf_content = file.file.read()
         print(f"PDF content loaded: {len(pdf_content)} bytes")
 
-        # 1단계: PDF 처리 방식 결정
+        # PDF 처리 방식 결정
+        is_readable = False
         if not force_image_processing:
-            from .pdf_processor import enhanced_pdf_validation, extract_text_from_readable_pdf
+            from .pdf_processor import enhanced_pdf_validation
             validation = enhanced_pdf_validation(pdf_content)
 
             if not validation['is_valid']:
@@ -66,80 +67,87 @@ def process_pdf_in_batches(
             is_readable = validation['is_readable']
             print(f"PDF validation: readable={is_readable}, score={validation.get('language_score', 'N/A')}")
 
-            if is_readable:
-                print("Using readable PDF processing")
-                
-                if stream:
-                    # 🆕 Readable PDF Streaming 구현
-                    return StreamingResponse(
-                        readable_pdf_streaming_with_cache(pdf_content, file.filename, model),
-                        media_type="text/event-stream",
-                        headers={
-                            "Cache-Control": "no-cache",
-                            "Connection": "keep-alive",
-                            "Content-Type": "text/event-stream"
-                        }
-                    )
-                else:
-                    # 일반 처리 (기존 코드 유지)
-                    extracted_pages = extract_text_from_readable_pdf(pdf_content, file.filename)
-                    if not extracted_pages:
-                        raise HTTPException(status_code=500, detail="텍스트 추출에 실패했습니다.")
-
-                    combined_text = "\n\n".join([
-                        f"=== 페이지 {page['page_number']} ===\n{page['text_content']}"
-                        for page in extracted_pages
-                        if page.get('text_content', '').strip()
-                    ])
-                    
-                    GLOBAL_PDF_CACHE[file.filename] = combined_text
-                    print(f"Cached readable PDF: {len(combined_text)} chars")
-                    
-                    return {
-                        "status": "completed",
-                        "filename": file.filename,
-                        "processing_method": "direct_text_extraction",
-                        "cached": True
-                    }
-          
-        # Not Readable 또는 강제 이미지 처리
-        print("PDF not readable, using image processing")
-        from .pdf_processor import PDFBatchProcessor
-
-        processor = PDFBatchProcessor(pdf_content, file.filename, model)
-
         if stream:
-            # 🆕 Image Processing Streaming + Cache
-            return StreamingResponse(
-                image_pdf_streaming_with_cache(processor, file.filename),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "Content-Type": "text/event-stream"
-                }
-            )
+            # 🆕 통합 함수 사용
+            if is_readable:
+                print("Using readable PDF streaming")
+                return StreamingResponse(
+                    pdf_streaming_with_cache(
+                        filename=file.filename,
+                        model=model,
+                        pdf_content=pdf_content
+                    ),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "Content-Type": "text/event-stream"
+                    }
+                )
+            else:
+                print("Using image processing PDF streaming")
+                from .pdf_processor import PDFBatchProcessor
+                processor = PDFBatchProcessor(pdf_content, file.filename, model)
+                
+                return StreamingResponse(
+                    pdf_streaming_with_cache(
+                        filename=file.filename,
+                        model=model,
+                        processor=processor
+                    ),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "Content-Type": "text/event-stream"
+                    }
+                )
         else:
-            # 일반 응답 (기존 코드 유지)
-            results, completed = processor.process_pdf_in_batches()
-            if not results:
-                raise HTTPException(status_code=500, detail="PDF 페이지 처리에 실패했습니다.")
+            # 일반 처리 (기존 로직 유지)
+            if is_readable:
+                from .pdf_processor import extract_text_from_readable_pdf
+                extracted_pages = extract_text_from_readable_pdf(pdf_content, file.filename)
+                if not extracted_pages:
+                    raise HTTPException(status_code=500, detail="텍스트 추출에 실패했습니다.")
 
-            combined_text = "\n\n".join([
-                f"=== 페이지 {page.get('page_number', 'N/A')} ===\n{page.get('text_content', '')}"
-                for page in results
-                if page.get('success') and page.get('text_content', '').strip()
-            ])
-            
-            GLOBAL_PDF_CACHE[file.filename] = combined_text
-            print(f"Cached non-streaming PDF: {len(combined_text)} chars")
-            
-            return {
-                "status": "completed" if completed else "partial",
-                "filename": file.filename,
-                "processing_method": "image_ocr_extraction",
-                "cached": True
-            }
+                combined_text = "\n\n".join([
+                    f"=== 페이지 {page['page_number']} ===\n{page['text_content']}"
+                    for page in extracted_pages
+                    if page.get('text_content', '').strip()
+                ])
+                
+                GLOBAL_PDF_CACHE[file.filename] = combined_text
+                print(f"Cached readable PDF: {len(combined_text)} chars")
+                
+                return {
+                    "status": "completed",
+                    "filename": file.filename,
+                    "processing_method": "direct_text_extraction",
+                    "cached": True
+                }
+            else:
+                from .pdf_processor import PDFBatchProcessor
+                processor = PDFBatchProcessor(pdf_content, file.filename, model)
+                results, completed = processor.process_pdf_in_batches()
+
+                if not results:
+                    raise HTTPException(status_code=500, detail="PDF 페이지 처리에 실패했습니다.")
+
+                combined_text = "\n\n".join([
+                    f"=== 페이지 {page.get('page_number', 'N/A')} ===\n{page.get('text_content', '')}"
+                    for page in results
+                    if page.get('success') and page.get('text_content', '').strip()
+                ])
+                
+                GLOBAL_PDF_CACHE[file.filename] = combined_text
+                print(f"Cached non-streaming PDF: {len(combined_text)} chars")
+                
+                return {
+                    "status": "completed" if completed else "partial",
+                    "filename": file.filename,
+                    "processing_method": "image_ocr_extraction",
+                    "cached": True
+                }
                 
     except HTTPException:
         raise
@@ -150,57 +158,191 @@ def process_pdf_in_batches(
         raise HTTPException(status_code=500, detail=f"PDF 처리 중 오류: {str(e)}")
 
 
+# 🎯 간단한 통합 PDF Streaming + Cache 함수
+async def pdf_streaming_with_cache(
+    filename: str,
+    model: str,
+    pdf_content: bytes = None,     # Readable용
+    processor: PDFBatchProcessor = None,  # Image용
+):
+    """Readable/Non-Readable PDF 통합 처리"""
+    try:
+        page_texts = []
+        chunk_count = 0
+        is_readable = pdf_content is not None
+        
+        print(f"🔄 PDF streaming ({'readable' if is_readable else 'image'}) for: {filename}")
+        
+        if is_readable:
+            # Readable PDF 처리
+            from .pdf_processor import extract_text_from_readable_pdf
+            import time
+            
+            extracted_pages = extract_text_from_readable_pdf(pdf_content, filename)
+            if not extracted_pages:
+                yield f"data: {json.dumps({'content': '❌ 텍스트 추출 실패', 'is_streaming': False, 'model': model})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+            
+            # 페이지별 스트리밍
+            for page in extracted_pages:
+                if page.get('text_content', '').strip():
+                    chunk_count += 1
+                    page_text = f"## 📄 페이지 {page['page_number']}\n\n{page['text_content']}"
+                    page_texts.append(page_text)
+                    
+                    print(f"📦 RAW[{chunk_count}]: {len(page_text)}chars | {page_text[:100]}...")
+                    print(f"📄 Page found in chunk {chunk_count}: {len(page_text)}chars")
+                    
+                    yield f"data: {json.dumps({'content': page_text, 'is_streaming': True, 'model': model})}\n\n"
+                    time.sleep(0.05)
+        else:
+            # Image Processing PDF 처리  
+            for raw_text_chunk in processor.process_pdf_streaming():
+                chunk_count += 1
+                print(f"📦 RAW[{chunk_count}]: {len(raw_text_chunk)}chars | {raw_text_chunk[:100]}...")
+                
+                yield f"data: {json.dumps({'content': raw_text_chunk, 'is_streaming': True, 'model': processor.model_name})}\n\n"
+                
+                if "## 📄 페이지" in raw_text_chunk:
+                    print(f"📄 Page found in chunk {chunk_count}: {len(raw_text_chunk)}chars")
+                    page_texts.append(raw_text_chunk)
+        
+        # 캐시 저장
+        if page_texts:
+            cache_data = {
+                'page_texts': page_texts,
+                'total_pages': len(page_texts),
+                'filename': filename,
+                'processing_method': 'direct_text_extraction' if is_readable else 'image_ocr_streaming'
+            }
+            GLOBAL_PDF_CACHE[filename] = cache_data
+            print(f"💾 Cache: {filename} -> {len(page_texts)} pages")
+            
+            # combined_text 검증
+            combined = get_combined_text_from_cache(filename)
+            print(f"✅ Combined: {len(combined)} chars")
+            
+            final_notice = {"content": "", "is_streaming": False, "cached": True, "pages_found": len(page_texts)}
+        else:
+            final_notice = {"content": "", "is_streaming": False, "cached": False, "error": "no_pages_found"}
+        
+        yield f"data: {json.dumps(final_notice)}\n\n"
+        yield "data: [DONE]\n\n"
+        
+    except Exception as e:
+        print(f"💥 Error: {str(e)}")
+        yield f"data: {json.dumps({'content': f'❌ 오류: {str(e)}', 'is_streaming': False, 'error': str(e)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+
+def get_combined_text_from_cache(filename: str) -> str:
+    """
+    GLOBAL_PDF_CACHE에서 메타데이터를 가져와서 combined_text 생성
+    /chat-with-pdf에서 필요할 때 호출
+    """
+    cache_data = GLOBAL_PDF_CACHE.get(filename)
+    if not cache_data:
+        return ""
+    
+    # 기존 문자열 형태
+    if isinstance(cache_data, str):
+        return cache_data
+    
+    # 메타데이터 형태
+    if isinstance(cache_data, dict) and 'page_texts' in cache_data:
+        page_texts = cache_data['page_texts']
+        combined_text = "\n\n".join(page_texts)
+        # 마크다운 정리 (## 📄 -> === 변환)
+        cleaned_text = combined_text.replace("## 📄 페이지", "=== 페이지").replace("---", "")
+        return cleaned_text.strip()
+    
+    return ""
+
 # 🆕 Readable PDF Streaming + Cache 함수
 async def readable_pdf_streaming_with_cache(pdf_content: bytes, filename: str, model: str):
-    """Readable PDF를 streaming하면서 동시에 cache에 저장"""
+    """
+    Readable PDF를 빠른 스트리밍으로 처리하면서 메타데이터 캐시 저장
+    """
     try:
         from .pdf_processor import extract_text_from_readable_pdf
+        import time
         
-        # 시작 메시지
-        yield f"data: {json.dumps({'content': f'📄 PDF 문서 분석 시작: {filename}\\n\\n', 'is_streaming': True, 'model': model})}\n\n"
+        print(f"🔄 Readable PDF streaming for: {filename}")
         
         # 텍스트 추출
         extracted_pages = extract_text_from_readable_pdf(pdf_content, filename)
         
         if not extracted_pages:
-            yield f"data: {json.dumps({'content': '❌ 텍스트 추출 실패\\n\\n', 'is_streaming': False, 'model': model, 'error': 'extraction_failed'})}\n\n"
+            yield f"data: {json.dumps({'content': '❌ 텍스트 추출 실패', 'is_streaming': False, 'model': model, 'error': 'extraction_failed'})}\n\n"
             yield f"data: [DONE]\n\n"
             return
         
-        # 진행률 표시하면서 텍스트 누적
-        combined_text = ""
         total_pages = len(extracted_pages)
+        page_texts = []  # 캐시용 페이지 텍스트들
+        chunk_count = 0
         
-        yield f"data: {json.dumps({'content': f'✅ {total_pages}페이지 텍스트 추출 완료\\n\\n', 'is_streaming': True, 'model': model})}\n\n"
+        # 시작 메시지
+        chunk_count += 1
+        start_msg = f"📄 읽기 가능한 PDF 분석 시작 (총 {total_pages}페이지)"
+        print(f"📦 RAW[{chunk_count}]: {len(start_msg)}chars | {start_msg}")
+        yield f"data: {json.dumps({'content': start_msg, 'is_streaming': True, 'model': model})}\n\n"
         
-        # 페이지별 스트리밍 (빠르게)
+        # 0.1초 정도 지연으로 스트리밍 체감
+        time.sleep(0.1)
+        
+        # 페이지별 빠른 스트리밍
         for i, page in enumerate(extracted_pages):
             if page.get('text_content', '').strip():
-                page_text = f"=== 페이지 {page['page_number']} ===\n{page['text_content']}"
-                combined_text += page_text + "\n\n"
+                chunk_count += 1
                 
-                # 진행률 표시
-                progress = int((i + 1) / total_pages * 100)
-                yield f"""data: {json.dumps({
-                    "content": f"📖 페이지 {page['page_number']} 처리 완료 ({progress}%)\n",
-                    "is_streaming": True,
-                    "model": model
-                })}"""
+                # 실제 페이지 텍스트 포맷팅 (image processing과 동일하게)
+                page_text = f"## 📄 페이지 {page['page_number']}\n\n{page['text_content']}"
+                page_texts.append(page_text)
+                
+                print(f"📦 RAW[{chunk_count}]: {len(page_text)}chars | {page_text[:100]}...")
+                print(f"📄 Page found in chunk {chunk_count}: {len(page_text)}chars")
+                
+                # SSE 포맷으로 전달
+                yield f"data: {json.dumps({'content': page_text, 'is_streaming': True, 'model': model})}\n\n"
                 
                 # 빠른 스트리밍을 위한 짧은 지연
-                # await asyncio.sleep(0.05)
+                time.sleep(0.05)
         
-        # 🔥 캐시 저장
-        GLOBAL_PDF_CACHE[filename] = combined_text.strip()
-        print(f"✅ Cached readable PDF streaming: {len(combined_text)} chars")
+        # 메타데이터로 캐시 저장 (image processing과 동일한 구조)
+        if page_texts:
+            cache_data = {
+                'page_texts': page_texts,
+                'total_pages': len(page_texts),
+                'filename': filename,
+                'processing_method': 'direct_text_extraction'
+            }
+            
+            GLOBAL_PDF_CACHE[filename] = cache_data
+            print(f"💾 Metadata cache: {filename} -> {len(page_texts)} pages stored")
+            
+            final_notice = {
+                "content": "",
+                "is_streaming": False,
+                "cached": True,
+                "pages_found": len(page_texts)
+            }
+        else:
+            print(f"⚠️ No pages extracted")
+            final_notice = {
+                "content": "",
+                "is_streaming": False,
+                "cached": False,
+                "error": "no_pages_extracted"
+            }
         
-        # 완료 메시지
-        yield f"data: {json.dumps({'content': f'\\n📊 분석 완료! 총 {len(combined_text)}자 추출됨\\n질문을 입력해주세요.\\n\\n', 'is_streaming': False, 'model': model})}\n\n"
+        # SSE 완료
+        yield f"data: {json.dumps(final_notice)}\n\n"
         yield f"data: [DONE]\n\n"
         
     except Exception as e:
-        print(f"Error in readable PDF streaming: {str(e)}")
-        yield f"data: {json.dumps({'content': f'❌ 처리 중 오류: {str(e)}\\n\\n', 'is_streaming': False, 'model': model, 'error': str(e)})}\n\n"
+        print(f"💥 Readable streaming error: {str(e)}")
+        yield f"data: {json.dumps({'content': f'❌ 처리 오류: {str(e)}', 'is_streaming': False, 'model': model, 'error': str(e)})}\n\n"
         yield f"data: [DONE]\n\n"
 
 # 🎯 단순하고 효과적인 Image Processing Streaming + Cache 함수
@@ -218,6 +360,7 @@ async def image_pdf_streaming_with_cache(
         
         for raw_text_chunk in processor.process_pdf_streaming():
             chunk_count += 1
+            print(f"📦 RAW[{chunk_count}]: {len(raw_text_chunk)}chars | {raw_text_chunk[:100]}...")
             
             # 1) SSE 포맷으로 모든 청크 전달 (기존 동작 유지)
             json_chunk = {
@@ -268,29 +411,6 @@ async def image_pdf_streaming_with_cache(
         yield f"data: {json.dumps({'content': f'오류: {str(e)}', 'is_streaming': False, 'error': str(e)})}\n\n"
         yield "data: [DONE]\n\n"
 
-def get_combined_text_from_cache(filename: str) -> str:
-    """
-    GLOBAL_PDF_CACHE에서 메타데이터를 가져와서 combined_text 생성
-    /chat-with-pdf에서 필요할 때 호출
-    """
-    cache_data = GLOBAL_PDF_CACHE.get(filename)
-    
-    if not cache_data:
-        return ""
-    
-    # 기존 문자열 형태 (하위 호환성)
-    if isinstance(cache_data, str):
-        return cache_data
-    
-    # 새로운 메타데이터 형태
-    if isinstance(cache_data, dict) and 'page_texts' in cache_data:
-        page_texts = cache_data['page_texts']
-        combined_text = "\n\n".join(page_texts)
-        # 마크다운 정리 (## 📄 -> === 변환)
-        cleaned_text = combined_text.replace("## 📄 페이지", "=== 페이지").replace("---", "")
-        return cleaned_text.strip()
-    
-    return ""
 
 @router.post("/chat-with-pdf")
 async def chat_with_pdf(request: dict):
