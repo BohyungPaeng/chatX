@@ -387,7 +387,7 @@ export function ChatArea({
       formData.append("prompt", "이 PDF 문서를 분석해주세요.");
       formData.append("model", selectedModel.id);
       formData.append("force_image_processing", "false");
-      formData.append("stream", "false");
+      formData.append("stream", "true");
   
       // API 요청 (process-pdf-batch)
       const controller = new AbortController();

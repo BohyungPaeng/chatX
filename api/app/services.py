@@ -116,33 +116,51 @@ async def generate_chat_response(request: ChatRequest) -> ChatResponse:
                 "content": msg.content
             })
         
-        # API 호출 준비
-        api_params = {
-            "model": api_model,
-            "messages": input_messages,
-            "temperature": request.temperature,
-            "max_tokens": request.max_tokens
-        }
-        
-        # API 호출
-        response = client.chat.completions.create(**api_params)
-        
-        # 응답 파싱
-        content = response.choices[0].message.content
-        
-        # 사용량 정보
-        usage = {
-            "prompt_tokens": response.usage.prompt_tokens,
-            "completion_tokens": response.usage.completion_tokens,
-            "total_tokens": response.usage.total_tokens
-        }
-        
-        return ChatResponse(
-            response=content,
-            model=model,
-            usage=usage,
-            citations=[]
-        )
+        if model.startswith("azure."):
+            pwc = await _get_pwc_model(model)
+            # PWC GPT 호출 (OpenAI와 유사하게)
+            response = await pwc.run(
+                messages=input_messages,
+                max_tokens=request.max_tokens,
+                model=model
+            )
+            # response는 dict로 가정 (OpenAI와 유사하게)
+            content = response["choices"][0]["message"]["content"]
+            usage = response.get("usage", {})
+            return ChatResponse(
+                response=content,
+                model=model,
+                usage=usage,
+                citations=[]
+            )
+        else:
+            # API 호출 준비
+            api_params = {
+                "model": api_model,
+                "messages": input_messages,
+                "temperature": request.temperature,
+                "max_tokens": request.max_tokens
+            }
+            
+            # API 호출
+            response = client.chat.completions.create(**api_params)
+            
+            # 응답 파싱
+            content = response.choices[0].message.content
+            
+            # 사용량 정보
+            usage = {
+                "prompt_tokens": response.usage.prompt_tokens,
+                "completion_tokens": response.usage.completion_tokens,
+                "total_tokens": response.usage.total_tokens
+            }
+            
+            return ChatResponse(
+                response=content,
+                model=model,
+                usage=usage,
+                citations=[]
+            )
         
     except Exception as e:
         # 에러 처리
@@ -337,10 +355,8 @@ async def analyze_image_streaming(request: ImageAnalysisRequest):
 async def generate_streaming_response(request: ChatRequest):
     """
     대화 응답을 생성하고 스트리밍 형식으로 반환합니다.
-    
     Args:
         request: ChatRequest 모델의 요청 데이터
-    
     Returns:
         스트리밍 응답 제너레이터
     """
@@ -356,12 +372,19 @@ async def generate_streaming_response(request: ChatRequest):
     }
     
     # 모델 ID 변환
-    api_model = model_mapping.get(model, model)
-    
+    model = model_mapping.get(model, model)
     async def stream_generator():
         try:
             # 입력 메시지 형식 변환 및 필터링
             filtered_messages = []
+            # 향후 conversation_history가 추가될 경우 아래 주석을 참고하여 messages를 생성할 수 있습니다.
+            # messages = []
+            # if hasattr(request, 'conversation_history') and request.conversation_history:
+            #     for msg in request.conversation_history:
+            #         messages.append({"role": msg.role, "content": msg.content})
+            # else:
+            #     for msg in request.messages:
+            #         messages.append({"role": msg.role, "content": msg.content})
             
             # 특수 필터링 단어 리스트
             filter_keywords = [
@@ -374,40 +397,49 @@ async def generate_streaming_response(request: ChatRequest):
                 if msg.role == "system" and any(keyword in msg.content for keyword in filter_keywords):
                     print(f"Filtering out system message with keywords: {msg.content[:50]}...")
                     continue
-                
                 # 사용자 메시지 중 웹 검색 접두사 제거
                 if msg.role == "user" and msg.content.startswith("웹 검색:"):
                     msg.content = msg.content.replace("웹 검색:", "").strip()
-                
                 filtered_messages.append({
                     "role": msg.role,
                     "content": msg.content
                 })
-            
-            # API 호출 준비
-            api_params = {
-                "model": api_model,
-                "messages": filtered_messages,
-                "temperature": request.temperature,
-                "max_tokens": request.max_tokens,
-                "stream": True
-            }
-            
-            # API 호출
-            stream = client.chat.completions.create(**api_params)
-            
+
             collected_messages = []
-            
-            # 청크 스트리밍
-            for chunk in stream:
-                if chunk.choices[0].delta.content is not None:
-                    content = chunk.choices[0].delta.content
-                    collected_messages.append(content)
-                    
-                    # 각 청크를 JSON으로 반환
-                    yield f"data: {json.dumps({'content': content, 'is_streaming': True, 'model': model})}\n\n"
-                    await asyncio.sleep(0)
-            
+            if model.startswith("azure."):
+                # PWC GPT 스트리밍
+                pwc = await _get_pwc_model(model)
+                async for chunk in pwc.run_stream(
+                    messages=filtered_messages,
+                    max_tokens=request.max_tokens,
+                    model=model
+                ):
+                    if "choices" in chunk and len(chunk["choices"]) > 0:
+                        delta = chunk["choices"][0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            collected_messages.append(content)
+                            yield f"data: {json.dumps({'content': content, 'is_streaming': True, 'model': model})}\n\n"
+                            await asyncio.sleep(0)
+            else:
+                # API 호출 준비
+                api_params = {
+                    "model": model,
+                    "messages": filtered_messages,
+                    "temperature": request.temperature,
+                    "max_tokens": request.max_tokens,
+                    "stream": True
+                }
+                # API 호출
+                stream = client.chat.completions.create(**api_params)
+                # 청크 스트리밍
+                for chunk in stream:
+                    if chunk.choices[0].delta.content is not None:
+                        content = chunk.choices[0].delta.content
+                        collected_messages.append(content)
+                        # 각 청크를 JSON으로 반환
+                        yield f"data: {json.dumps({'content': content, 'is_streaming': True, 'model': model})}\n\n"
+                        await asyncio.sleep(0)
             # 스트리밍 완료 신호
             completion_info = {
                 'content': '', 
@@ -415,17 +447,14 @@ async def generate_streaming_response(request: ChatRequest):
                 'model': model, 
                 'usage': {'completion_tokens': len(collected_messages)}
             }
-            
             yield f"data: {json.dumps(completion_info)}\n\n"
             yield f"data: [DONE]\n\n"
-            
         except Exception as e:
             # 에러 처리
             error_message = f"Error streaming response: {str(e)}"
             print(f"Streaming error: {str(e)}")
             yield f"data: {json.dumps({'content': error_message, 'is_streaming': False, 'error': str(e), 'model': model})}\n\n"
             yield f"data: [DONE]\n\n"
-    
     # 비동기 이터레이터 반환
     return stream_generator()
 
