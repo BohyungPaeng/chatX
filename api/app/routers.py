@@ -13,15 +13,16 @@ import json
 router = APIRouter()
 
 from .pdf_processor import PDFBatchProcessor, PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT, PDF_MAX_FILE_SIZE
-
+# 글로벌 캐시 추가
+GLOBAL_PDF_CACHE = {}
 
 @router.post("/process-pdf-batch")
-async def process_pdf_in_batches(
+def process_pdf_in_batches(  # 🔥 async 제거
     file: UploadFile = File(...),
     prompt: str = Form("PDF 문서를 분석해주세요."),
     model: str = Form("azure.gpt-4o-2024-11-20"),
     force_image_processing: bool = Form(False),
-    stream: bool = Form(True)  # upload-image와 동일한 패턴
+    stream: bool = Form(True)
 ):
     """
     PDF 파일을 처리하여 응답 반환
@@ -31,186 +32,160 @@ async def process_pdf_in_batches(
     try:
         print(f"=== PDF Processing Started ===")
         print(f"File: {file.filename}, Model: {model}, Force Image: {force_image_processing}, Stream: {stream}")
-        
+
         # 파일 타입 검증
         if not file.filename.lower().endswith('.pdf'):
             raise HTTPException(status_code=400, detail="PDF 파일만 지원됩니다.")
-        
+
         # 파일 크기 검증
         file.file.seek(0, 2)
         file_size = file.file.tell()
         file.file.seek(0)
-        
+
         if file_size > PDF_MAX_FILE_SIZE:
             raise HTTPException(
                 status_code=400, 
                 detail=f"파일 크기가 너무 큽니다. 최대 {PDF_MAX_FILE_SIZE // (1024*1024)}MB까지 지원합니다."
             )
-        
+
         # 파일 내용 읽기
-        pdf_content = await file.read()
+        pdf_content = file.file.read()  # 🔥 await 제거
         print(f"PDF content loaded: {len(pdf_content)} bytes")
-        
-        # 1단계: PDF 처리 방식 결정
+
+        # 1단계: PDF 처리 방식 결정 및 텍스트 추출
         combined_text = ""
         processing_method = ""
-        use_realtime_streaming = False  # 실시간 스트리밍 사용 여부
-        
+
         if not force_image_processing:
             from .pdf_processor import enhanced_pdf_validation, extract_text_from_readable_pdf
             validation = enhanced_pdf_validation(pdf_content)
-            
+
             if not validation['is_valid']:
                 raise HTTPException(
                     status_code=400, 
                     detail=f"PDF 파일이 유효하지 않습니다: {validation.get('error', 'Unknown error')}"
                 )
-            
+
             is_readable = validation['is_readable']
             print(f"PDF validation: readable={is_readable}, score={validation.get('language_score', 'N/A')}")
-            
+
             if is_readable:
                 # readable: PyMuPDF 직접 텍스트 추출
                 print("Using readable PDF processing")
                 extracted_pages = extract_text_from_readable_pdf(pdf_content, file.filename)
-                
+
                 if not extracted_pages:
                     raise HTTPException(status_code=500, detail="텍스트 추출에 실패했습니다.")
-                
+
                 combined_text = "\n\n".join([
                     f"=== 페이지 {page['page_number']} ===\n{page['text_content']}"
                     for page in extracted_pages
                     if page.get('text_content', '').strip()
                 ])
                 processing_method = "direct_text_extraction"
-        
-        if not combined_text:  # readable하지 않은 경우 또는 강제 이미지 처리
-            print("Using image PDF processing")
-            from .pdf_processor import PDFBatchProcessor
-            
-            processor = PDFBatchProcessor(pdf_content, file.filename, model)
-            
-            if stream:
-                # 스트리밍: 실시간 배치 처리 + 채팅 응답을 연결
-                print("Using real-time streaming with chat response")
-                use_realtime_streaming = True
                 
-                async def combined_pdf_streaming():
-                    # 1단계: 실시간 배치 처리 스트리밍
-                    batch_text = ""
-                    async for chunk in processor.pdf_streaming_generator():
-                        # 배치 처리 결과를 수집하면서 스트리밍
-                        if chunk.startswith('data: '):
-                            data_part = chunk[6:].split('\n\n')[0]
-                            try:
-                                data = json.loads(data_part)
-                                if data.get('content'):
-                                    batch_text += data['content']
-                            except:
-                                pass
-                        yield chunk
+                # 🔥 글로벌 캐시에 저장
+                GLOBAL_PDF_CACHE[file.filename] = combined_text
+                print(f"Cached readable PDF: {len(combined_text)} chars")
+                
+                # readable PDF는 JSON 응답 반환
+                return {
+                    "status": "completed",
+                    "filename": file.filename,
+                    "processing_method": processing_method,
+                    "cached": True
+                }
+          
+        # 그 이외 경우는 이미지 처리 진행
+        print("PDF not readable, using image processing")
+        from .pdf_processor import PDFBatchProcessor
+
+        processor = PDFBatchProcessor(pdf_content, file.filename, model)
+
+        if stream:
+            # 🔥 스트리밍: 텍스트 추출하면서 캐시 저장하는 래퍼
+            print("Using streaming with cache wrapper")
+            
+            # async def streaming_with_cache():
+            #     accumulated_text = ""
+                
+            #     # pdf_streaming_generator의 결과를 중간에 가로채서 텍스트 추출
+            #     async for chunk in processor.pdf_streaming_generator():
+            #         # 원본 스트리밍 그대로 전달
+            #         yield chunk
                     
-                    # 2단계: 배치 처리 완료 후 채팅 응답
-                    if batch_text.strip():
-                        yield f"data: {json.dumps({'content': '\\n\\n🤖 **AI 분석 결과:**\\n\\n', 'is_streaming': True, 'model': model})}\n\n"
-                        
-                        # ChatRequest 생성
-                        system_message = f"""당신은 PDF 문서 분석 전문가입니다. 
-다음 PDF 문서({file.filename})의 내용을 바탕으로 사용자의 질문에 정확하고 자세하게 답변해주세요.
-
-문서 처리 방식: image_ocr_extraction
-문서 내용:
-{batch_text}
-
-답변 시 문서에서 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
-                        
-                        chat_request = ChatRequest(
-                            messages=[
-                                ChatMessage(role="system", content=system_message),
-                                ChatMessage(role="user", content=prompt)
-                            ],
-                            model=model,
-                            temperature=0.7,
-                            max_tokens=1000,
-                            stream=True
-                        )
-                        
-                        # 채팅 응답 스트리밍
-                        stream_iterator = await generate_streaming_response(chat_request)
-                        async for chat_chunk in stream_iterator:
-                            yield chat_chunk
-                    else:
-                        yield f"data: {json.dumps({'content': '\\n\\n❌ 추출된 텍스트가 없어 AI 분석을 수행할 수 없습니다.', 'is_streaming': False, 'model': model})}\n\n"
-                        yield f"data: [DONE]\\n\\n"
+            #         # 페이지 텍스트가 포함된 청크에서 텍스트 추출
+            #         if isinstance(chunk, str) and "## 📄 페이지" in chunk:
+            #             try:
+            #                 # "## 📄 페이지 N" 이후 "---" 전까지의 텍스트 추출
+            #                 lines = chunk.split('\n')
+            #                 page_content = []
+            #                 capturing = False
+                            
+            #                 for line in lines:
+            #                     if line.startswith("## 📄 페이지"):
+            #                         capturing = True
+            #                         page_content.append(line)
+            #                     elif line.strip() == "---":
+            #                         capturing = False
+            #                         if page_content:
+            #                             accumulated_text += "\n".join(page_content) + "\n\n"
+            #                             page_content = []
+            #                     elif capturing:
+            #                         page_content.append(line)
+            #             except Exception as e:
+            #                 print(f"Error extracting text from chunk: {e}")
                 
-                return StreamingResponse(
-                    combined_pdf_streaming(),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "Content-Type": "text/event-stream"
-                    }
-                )
-            else:
-                # 일반 응답: 배치 처리 완료 후 결과 반환
-                results, completed = processor.process_pdf_in_batches()
-                
-                if not results:
-                    raise HTTPException(status_code=500, detail="PDF 페이지 처리에 실패했습니다.")
-                
-                combined_text = "\n\n".join([
-                    f"=== 페이지 {page.get('page_number', 'N/A')} ===\n{page.get('text_content', '')}"
-                    for page in results
-                    if page.get('success') and page.get('text_content', '').strip()
-                ])
-                processing_method = "image_ocr_extraction"
-        
-        # 2단계: 일반 응답 (readable PDF 또는 non-readable PDF의 non-stream)
-        if not use_realtime_streaming:
-            if not combined_text.strip():
-                raise HTTPException(status_code=500, detail="추출된 텍스트가 없습니다.")
-            
-            # 공통 시스템 메시지 생성 (중복 제거)
-            system_message = f"""당신은 PDF 문서 분석 전문가입니다. 
-다음 PDF 문서({file.filename})의 내용을 바탕으로 사용자의 질문에 정확하고 자세하게 답변해주세요.
-
-문서 처리 방식: {processing_method}
-문서 내용:
-{combined_text}
-
-답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
-            
-            chat_request = ChatRequest(
-                messages=[
-                    ChatMessage(role="system", content=system_message),
-                    ChatMessage(role="user", content=prompt)
-                ],
-                model=model,
-                temperature=0.7,
-                max_tokens=1000,
-                stream=stream
+            #     # 스트리밍 완료 후 캐시에 저장
+            #     if accumulated_text.strip():
+            #         GLOBAL_PDF_CACHE[file.filename] = accumulated_text.strip()
+            #         print(f"Cached streaming PDF: {len(accumulated_text)} chars")
+                    
+            #         # 최종 완료 신호 추가
+            #         yield f"data: {json.dumps({'status': 'cached', 'filename': file.filename, 'text_length': len(accumulated_text)})}\n\n"
+            # return StreamingResponse(
+            #     streaming_with_cache(),
+            #     media_type="text/event-stream",
+            #     headers={
+            #         "Cache-Control": "no-cache",
+            #         "Connection": "keep-alive",
+            #         "Content-Type": "text/event-stream"
+            #     }
+            # )
+            return StreamingResponse(
+                processor.pdf_streaming_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "Content-Type": "text/event-stream"
+                }
             )
+        else:
+            # 일반 응답: 배치 처리 완료 후 결과 반환
+            results, completed = processor.process_pdf_in_batches()
+
+            if not results:
+                raise HTTPException(status_code=500, detail="PDF 페이지 처리에 실패했습니다.")
+
+            combined_text = "\n\n".join([
+                f"=== 페이지 {page.get('page_number', 'N/A')} ===\n{page.get('text_content', '')}"
+                for page in results
+                if page.get('success') and page.get('text_content', '').strip()
+            ])
+            processing_method = "image_ocr_extraction"
             
-            if stream:
-                # 스트리밍 응답
-                from .services import generate_streaming_response
-                stream_iterator = await generate_streaming_response(chat_request)
-                return StreamingResponse(
-                    stream_iterator,
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "Content-Type": "text/event-stream"
-                    }
-                )
-            else:
-                # 일반 응답
-                from .services import generate_chat_response
-                response = await generate_chat_response(chat_request)
-                return response
-        
+            # 🔥 글로벌 캐시에 저장
+            GLOBAL_PDF_CACHE[file.filename] = combined_text
+            print(f"Cached non-streaming PDF: {len(combined_text)} chars")
+            
+            return {
+                "status": "completed" if completed else "partial",
+                "filename": file.filename,
+                "processing_method": processing_method,
+                "cached": True
+            }
+                
     except HTTPException:
         raise
     except Exception as e:
@@ -219,6 +194,71 @@ async def process_pdf_in_batches(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"PDF 처리 중 오류: {str(e)}")
 
+@router.post("/chat-with-pdf")
+async def chat_with_pdf(request: dict):
+    """
+    글로벌 캐시에서 PDF 텍스트를 가져와서 채팅 응답 생성
+    """
+    try:
+        filename = request.get("filename", "")
+        prompt = request.get("prompt", "이 PDF 문서를 분석해주세요.")
+        model = request.get("model", "azure.gpt-4o-2024-11-20")
+        stream = request.get("stream", True)
+        
+        print(f"=== Chat with PDF Started ===")
+        print(f"Filename: {filename}, Model: {model}, Stream: {stream}")
+        
+        # 글로벌 캐시에서 텍스트 가져오기
+        if filename not in GLOBAL_PDF_CACHE:
+            raise HTTPException(status_code=400, detail="PDF 텍스트를 찾을 수 없습니다. 먼저 PDF를 분석해주세요.")
+        
+        extracted_text = GLOBAL_PDF_CACHE[filename]
+        print(f"Found cached text length: {len(extracted_text)}")
+        
+        # 시스템 메시지 생성
+        system_message = f"""당신은 PDF 문서 분석 전문가입니다. 
+다음 PDF 문서({filename})의 내용을 바탕으로 사용자의 질문에 정확하고 자세하게 답변해주세요.
+
+문서 내용:
+{extracted_text}
+
+답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
+        
+        # ChatRequest 생성
+        chat_request = ChatRequest(
+            messages=[
+                ChatMessage(role="system", content=system_message),
+                ChatMessage(role="user", content=prompt)
+            ],
+            model=model,
+            temperature=0.7,
+            max_tokens=1000,
+            stream=stream
+        )
+        
+        if stream:
+            # 스트리밍 응답
+            stream_iterator = await generate_streaming_response(chat_request)
+            return StreamingResponse(
+                stream_iterator,
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "Content-Type": "text/event-stream"
+                }
+            )
+        else:
+            # 일반 응답
+            response = await generate_chat_response(chat_request)
+            return response
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Critical error in chat with PDF: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"PDF 채팅 중 오류: {str(e)}")
+    
 @router.get("/pdf-processing-config")
 def get_pdf_processing_config():
     """
