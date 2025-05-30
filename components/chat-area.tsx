@@ -169,6 +169,9 @@ export function ChatArea({
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [isSearchMode, setIsSearchMode] = useState<boolean>(false);
 
+  // 개발자용 stream 제어
+  const [devStream, setDevStream] = useState(true);
+
   // 전역 chatHistory 상태를 공유하기 위한 이벤트 발송 함수
   const broadcastChatHistory = useCallback(() => {
     // 채팅 히스토리가 업데이트됨을 알리는 커스텀 이벤트 생성
@@ -709,7 +712,7 @@ export function ChatArea({
         formData.append("filename", selectedFile.name);
         formData.append("prompt", input || `이 ${fileTypeName}에 대해 자세히 설명해주세요.`);
         formData.append("model", selectedModel.id);
-        formData.append("stream", "true");
+        formData.append("stream", devStream ? "true" : "false");
       } else {
         // 이미지용 FormData (기존 로직)
         formData.append(
@@ -719,7 +722,7 @@ export function ChatArea({
         formData.append("model", selectedModel.id);
         formData.append("max_tokens", "1000");
         formData.append("detail", "auto");
-        formData.append("stream", "true");
+        formData.append("stream", devStream ? "true" : "false");
         
         const conversationHistory = messages
           .filter((msg) => !msg.imageUrl)
