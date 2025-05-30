@@ -13,8 +13,18 @@ import json
 router = APIRouter()
 
 from .pdf_processor import PDFBatchProcessor, PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT, PDF_MAX_FILE_SIZE
-# 글로벌 캐시 추가
-GLOBAL_PDF_CACHE = {}
+from .cache_manager import pdf_cache_manager  # 직접 import
+class GlobalCacheAdapter:
+    def __contains__(self, filename):
+        return pdf_cache_manager.exists(filename)
+    
+    def __getitem__(self, filename):
+        return pdf_cache_manager.load(filename)
+    
+    def __setitem__(self, filename, data):
+        pdf_cache_manager.save(filename, data)
+
+GLOBAL_PDF_CACHE = GlobalCacheAdapter()
 
 @router.post("/process-pdf-batch")
 def process_pdf_in_batches(
@@ -107,47 +117,37 @@ def process_pdf_in_batches(
             if is_readable:
                 from .pdf_processor import extract_text_from_readable_pdf
                 extracted_pages = extract_text_from_readable_pdf(pdf_content, file.filename)
-                if not extracted_pages:
-                    raise HTTPException(status_code=500, detail="텍스트 추출에 실패했습니다.")
-
-                combined_text = "\n\n".join([
-                    f"=== 페이지 {page['page_number']} ===\n{page['text_content']}"
-                    for page in extracted_pages
-                    if page.get('text_content', '').strip()
-                ])
-                
-                GLOBAL_PDF_CACHE[file.filename] = combined_text
-                print(f"Cached readable PDF: {len(combined_text)} chars")
-                
-                return {
-                    "status": "completed",
-                    "filename": file.filename,
-                    "processing_method": "direct_text_extraction",
-                    "cached": True
-                }
+                processing_method = "direct_text_extraction"
             else:
                 from .pdf_processor import PDFBatchProcessor
                 processor = PDFBatchProcessor(pdf_content, file.filename, model)
-                results, completed = processor.process_pdf_in_batches()
+                extracted_pages, completed = processor.process_pdf_in_batches()
+                processing_method = "image_ocr_extraction"
 
-                if not results:
-                    raise HTTPException(status_code=500, detail="PDF 페이지 처리에 실패했습니다.")
+            if not extracted_pages:
+                raise HTTPException(status_code=500, detail="PDF 텍스트 추출에 실패했습니다.")
 
-                combined_text = "\n\n".join([
-                    f"=== 페이지 {page.get('page_number', 'N/A')} ===\n{page.get('text_content', '')}"
-                    for page in results
-                    if page.get('success') and page.get('text_content', '').strip()
-                ])
-                
-                GLOBAL_PDF_CACHE[file.filename] = combined_text
-                print(f"Cached non-streaming PDF: {len(combined_text)} chars")
-                
-                return {
-                    "status": "completed" if completed else "partial",
-                    "filename": file.filename,
-                    "processing_method": "image_ocr_extraction",
-                    "cached": True
-                }
+            combined_text = "\n\n".join([
+                f"=== 페이지 {page['page_number']} ===\n{page['text_content']}"
+                for page in extracted_pages
+                if page.get('text_content', '').strip()
+            ])
+            
+            GLOBAL_PDF_CACHE[file.filename] = {
+                'page_texts': [page.get('text_content', '') for page in extracted_pages if page.get('text_content', '').strip()],
+                'total_pages': len(extracted_pages),
+                'filename': file.filename,
+                'processing_method': processing_method
+            }
+            
+            print(f"Cached {processing_method} PDF: {len(extracted_pages)} pages")
+
+            return {
+                "status": "completed" if is_readable or completed else "partial",
+                "filename": file.filename,
+                "processing_method": processing_method,
+                "cached": True
+            }
                 
     except HTTPException:
         raise
@@ -241,7 +241,7 @@ def get_combined_text_from_cache(filename: str) -> str:
     GLOBAL_PDF_CACHE에서 메타데이터를 가져와서 combined_text 생성
     /chat-with-pdf에서 필요할 때 호출
     """
-    cache_data = GLOBAL_PDF_CACHE.get(filename)
+    cache_data = GLOBAL_PDF_CACHE[filename]
     if not cache_data:
         return ""
     
@@ -410,7 +410,6 @@ async def image_pdf_streaming_with_cache(
         print(f"💥 Simple streaming error: {str(e)}")
         yield f"data: {json.dumps({'content': f'오류: {str(e)}', 'is_streaming': False, 'error': str(e)})}\n\n"
         yield "data: [DONE]\n\n"
-
 
 @router.post("/chat-with-pdf")
 async def chat_with_pdf(

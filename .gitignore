@@ -32,3 +32,4 @@ __pycache__/
 # api/app/__pycache__/*
 # *.cpython-312.pyc
 .windsurf/rules/chatx.md
+*.pkl.gz
