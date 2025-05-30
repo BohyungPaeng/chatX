@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Union, Dict, Any, Literal
+import warnings
+warnings.filterwarnings("ignore", message=".*has conflict with protected namespace.*")
 
 
 class ChatMessage(BaseModel):
@@ -8,11 +10,14 @@ class ChatMessage(BaseModel):
 
 
 class ImageAnalysisRequest(BaseModel):
-    """
-    이미지 분석 요청 모델
-    """
+    """이미지 분석 요청 모델"""
+    
+    # Pydantic 경고 억제
+    model_config = {'protected_namespaces': ()}
+    
     image_url: Optional[str] = None
     prompt: str
+    system_prompt: Optional[str] = None  # 새로 추가
     model: Optional[str] = None
     max_tokens: int = 1000
     detail: str = "auto"

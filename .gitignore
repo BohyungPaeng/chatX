@@ -26,6 +26,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 misc/*
-api/app/__pycache__/*
-*.cpython-312.pyc
-api/app/__pycache__/models.cpython-312.pyc
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+# api/app/__pycache__/*
+# *.cpython-312.pyc
+.windsurf/rules/chatx.md

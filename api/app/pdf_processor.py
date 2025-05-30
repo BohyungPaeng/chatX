@@ -5,26 +5,266 @@ PDF 배치 처리 - 간결하고 아름다운 버전
 """
 
 import time
+import json
 import fitz
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any, Tuple
 import threading
-from .services import convert_pdf_page_to_base64, analyze_image
-from .models import ImageAnalysisRequest
+from .services import convert_pdf_page_to_base64, analyze_image, generate_streaming_response
+from .models import ImageAnalysisRequest, ChatRequest, ChatMessage
 
 # PDF 처리 관련 상수
-PDF_BATCH_SIZE = 8  # 배치당 처리할 페이지 수
-PDF_PROCESSING_TIMEOUT = 180  # 처리 타임아웃 (초)
+PDF_BATCH_SIZE = 4  # 배치당 처리할 페이지 수
+PDF_PROCESSING_TIMEOUT = 1  # 처리 타임아웃 (초)
 PDF_MAX_FILE_SIZE = 50 * 1024 * 1024  # 최대 파일 크기 (50MB)
 TOP_K_MAX = 10  # 검색 결과 최대 개수
 TOP_K_MIN = 1   # 검색 결과 최소 개수
+AVAILABLE_MODELS = [
+    "bedrock.anthropic.claude-3-7-sonnet-v1", # 3/15$
+    "vertex_ai.gemini-2.5-pro-preview-03-25", #1.25/10$
+    "azure.gpt-4o-2024-11-20", #2.75/11$
+    "azure.gpt-4.1-2025-04-14", #2/8$
+    "vertex_ai.gemini-2.5-flash-preview-04-17", #0.15/0.6$
+    "bedrock.anthropic.claude-3-5-haiku", #0.8/4$
+    "azure.gpt-4.1-mini-2025-04-14", #0.4/1.6$
+    "azure.gpt-4.1-nano-2025-04-14", #0.1/0.4$
+]
+
+def validate_pdf_readable(pdf_content: bytes) -> Dict[str, Any]:
+    """
+    PDF readable 여부 검증
+    
+    Returns:
+        Dict: {
+            'is_readable': bool,
+            'is_valid': bool, 
+            'total_pages': int,
+            'has_text': bool,
+            'error': str or None
+        }
+    """
+    try:
+        # 1. 파일 헤더 기본 검증
+        if not pdf_content.startswith(b'%PDF-'):
+            return {
+                'is_readable': False,
+                'is_valid': False,
+                'total_pages': 0,
+                'has_text': False,
+                'error': 'Invalid PDF header'
+            }
+        
+        # 2. PyMuPDF로 문서 열기 시도
+        doc = fitz.open(stream=pdf_content, filetype="pdf")
+        
+        if len(doc) == 0:
+            doc.close()
+            return {
+                'is_readable': False,
+                'is_valid': True,
+                'total_pages': 0,
+                'has_text': False,
+                'error': 'Empty PDF document'
+            }
+        
+        total_pages = len(doc)
+        has_text = False
+        
+        # 3. 첫 몇 페이지에서 텍스트 추출 가능 여부 확인
+        check_pages = min(3, total_pages)  # 최대 3페이지만 확인
+        extracted_chars = 0
+        
+        for page_num in range(check_pages):
+            try:
+                page = doc[page_num]
+                text = page.get_text()
+                if text and text.strip():
+                    extracted_chars += len(text.strip())
+                    if extracted_chars > 50:  # 50자 이상 추출되면 readable로 판단
+                        has_text = True
+                        break
+            except Exception as e:
+                print(f"Error extracting text from page {page_num}: {str(e)}")
+                continue
+        
+        doc.close()
+        
+        # 4. readable 여부 판단
+        is_readable = has_text and extracted_chars > 50
+        
+        return {
+            'is_readable': is_readable,
+            'is_valid': True,
+            'total_pages': total_pages,
+            'has_text': has_text,
+            'error': None
+        }
+        
+    except Exception as e:
+        return {
+            'is_readable': False,
+            'is_valid': False,
+            'total_pages': 0,
+            'has_text': False,
+            'error': f'PDF validation error: {str(e)}'
+        }
+
+
+def enhanced_pdf_validation(pdf_content: bytes) -> Dict[str, Any]:
+    """
+    향상된 PDF readable 검증
+    언어 꼬임/암호화 감지 포함
+    """
+    basic_validation = validate_pdf_readable(pdf_content)
+    
+    if not basic_validation['is_readable']:
+        return basic_validation
+    
+    # 추가 검증: 의미있는 텍스트인지 확인
+    try:
+        doc = fitz.open(stream=pdf_content, filetype="pdf")
+        
+        # 첫 3페이지에서 샘플 텍스트 추출
+        sample_text = ""
+        for page_num in range(min(3, len(doc))):
+            page_text = doc[page_num].get_text()
+            sample_text += page_text[:500]  # 페이지당 500자만
+            if len(sample_text) > 1000:  # 총 1000자면 충분
+                break
+        
+        doc.close()
+        
+        # 언어/암호화 검증
+        from .utils import calculate_language_score
+        language_score = calculate_language_score(sample_text)
+        
+        # 스코어가 낮으면 readable하지 않다고 판단
+        if language_score < 0.3:
+            basic_validation.update({
+                'is_readable': False,
+                'language_score': language_score,
+                'reason': 'Text appears to be corrupted, encrypted, or in unsupported encoding'
+            })
+        else:
+            basic_validation.update({
+                'language_score': language_score,
+                'reason': 'Text appears readable and meaningful'
+            })
+        
+        return basic_validation
+        
+    except Exception as e:
+        basic_validation.update({
+            'error': f'Enhanced validation failed: {str(e)}'
+        })
+        return basic_validation
+
+
+def extract_text_from_readable_pdf(pdf_content: bytes, filename: str) -> List[Dict[str, Any]]:
+    """
+    readable PDF에서 PyMuPDF로 직접 텍스트 추출
+    PDFBatchProcessor와 동일한 메타데이터 구조 반환
+    """
+    try:
+        doc = fitz.open(stream=pdf_content, filetype="pdf")
+        total_pages = len(doc)
+        extracted_pages = []
+        
+        print(f"Extracting text directly from {total_pages} pages using PyMuPDF")
+        
+        for page_num in range(total_pages):
+            try:
+                page = doc[page_num]
+                text_content = page.get_text()
+                
+                # 기존 PDFBatchProcessor와 동일한 메타데이터 구조
+                page_data = {
+                    'page_number': page_num + 1,  # 1-based
+                    'text_content': text_content.strip() if text_content else "",
+                    'file_name': filename,
+                    'processed_at': time.time(),
+                    'unique_id': f"{filename}_page_{page_num + 1}",
+                    'success': True,
+                    'processing_method': 'pymupdf_direct'
+                }
+                
+                extracted_pages.append(page_data)
+                
+                if (page_num + 1) % 10 == 0:
+                    print(f"Extracted text from page {page_num + 1}/{total_pages}")
+                    
+            except Exception as e:
+                print(f"Error extracting text from page {page_num + 1}: {str(e)}")
+                
+                error_page = {
+                    'page_number': page_num + 1,
+                    'text_content': f"Text extraction failed: {str(e)}",
+                    'file_name': filename,
+                    'processed_at': time.time(),
+                    'unique_id': f"{filename}_page_{page_num + 1}",
+                    'success': False,
+                    'error': str(e),
+                    'processing_method': 'pymupdf_direct'
+                }
+                extracted_pages.append(error_page)
+        
+        doc.close()
+        print(f"PyMuPDF direct extraction completed: {len(extracted_pages)} pages")
+        
+        return extracted_pages
+        
+    except Exception as e:
+        print(f"Error in direct text extraction: {str(e)}")
+        return []
+
+
+async def process_readable_pdf_to_chat(pdf_content: bytes, filename: str, prompt: str, model: str):
+    """readable PDF 처리 후 services의 generate_streaming_response 호출"""
+    
+    # 1. 텍스트 추출
+    extracted_pages = extract_text_from_readable_pdf(pdf_content, filename)
+    
+    if not extracted_pages:
+        raise ValueError("Failed to extract text from readable PDF")
+    
+    # 2. 텍스트 합치기
+    combined_text = "\n\n".join([
+        f"=== 페이지 {page['page_number']} ===\n{page['text_content']}"
+        for page in extracted_pages
+        if page.get('text_content', '').strip()
+    ])
+    
+    # 3. ChatRequest 생성
+    system_message = f"""당신은 PDF 문서 분석 전문가입니다. 
+다음 PDF 문서({filename})의 내용을 바탕으로 사용자의 질문에 정확하고 자세하게 답변해주세요.
+
+문서 내용:
+{combined_text}
+
+답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
+    
+    chat_request = ChatRequest(
+        messages=[
+            ChatMessage(role="system", content=system_message),
+            ChatMessage(role="user", content=prompt)
+        ],
+        model=model,
+        temperature=0.7,
+        max_tokens=1000,
+        stream=True
+    )
+    
+    # 4. services.py의 기존 함수 호출
+    return await generate_streaming_response(chat_request)
+
 
 class PDFBatchProcessor:
     """PDF 배치 처리를 담당하는 클래스"""
     
-    def __init__(self, pdf_content: bytes, filename: str):
+    def __init__(self, pdf_content: bytes, filename: str, model_name: str):
         self.pdf_content = pdf_content
         self.filename = filename
+        self.model_name = model_name
         self.processed_pages = 0
         self.total_pages = 0
         self.lock = threading.Lock()
@@ -80,16 +320,29 @@ class PDFBatchProcessor:
         except Exception as e:
             print(f"Error in create_page_data: {str(e)}")
             return False
-    
+
+    async def pdf_streaming_generator(self):
+        """
+        PDF 배치 처리 결과를 스트리밍 형식으로 변환
+        기존 generate_streaming_response와 동일한 형식 사용
+        """
+        try:
+            for text_chunk in self.process_pdf_streaming():
+                # self.model 사용
+                yield f"data: {json.dumps({'content': text_chunk, 'is_streaming': True, 'model': self.model_name})}\n\n"
+            
+            # 스트리밍 완료 신호
+            yield f"data: {json.dumps({'content': '', 'is_streaming': False, 'model': self.model_name})}\n\n"
+            yield f"data: [DONE]\n\n"
+            
+        except Exception as e:
+            error_message = f"PDF 처리 중 오류가 발생했습니다: {str(e)}"
+            yield f"data: {json.dumps({'content': error_message, 'is_streaming': False, 'error': str(e), 'model': self.model_name})}\n\n"
+            yield f"data: [DONE]\n\n"
+
     def process_single_page(self, page_num: int) -> Dict[str, Any]:
         """
         단일 페이지 처리 (기존 services 함수 재사용)
-        
-        Args:
-            page_num: 페이지 번호 (1-based)
-        
-        Returns:
-            Dict: 처리된 페이지 데이터
         """
         try:
             print(f"Processing page {page_num}...")
@@ -109,7 +362,7 @@ class PDFBatchProcessor:
                 image_url = f"data:image/png;base64,{image_url}"
             
             # 2. 기존 analyze_image 함수 사용 (가드레일 우회 프롬프트)
-            sys = """Your task is to interpret the unstructured text as precisely as possible and convert it into well-organized, readable format.
+            ocr_system_prompt = """Your task is to interpret the unstructured text as precisely as possible and convert it into well-organized, readable format.
             Since the text may be recognized from incomplete OCR engine, the order and structure of the original text may be mixed up, and there may be some potential typos.
             Identify all text elements, paragraphs, headings, lists, tables, or any textual content mentioned in the image and extract them accurately.
             Preserve the original language and structure as much as possible. Do not translate or modify the content unnecessarily.
@@ -117,10 +370,12 @@ class PDFBatchProcessor:
             """
             analysis_request = ImageAnalysisRequest(
                 image_url=image_url,
-                prompt=f"{sys} 해당 페이지 {page_num})의 텍스트를 정확하게 추출해주세요. 표, 목록, 제목 등의 구조를 유지하면서 읽기 쉽게 정리해주세요.",
-                model="gpt-4.1-2025-04-14",
+                prompt=f"해당 페이지 ({page_num})의 텍스트를 정확하게 추출해주세요. 표, 목록, 제목 등의 구조를 유지하면서 읽기 쉽게 정리해주세요.",
+                system_prompt=ocr_system_prompt,
                 # model="gpt-4o",
-                max_tokens=2048,
+                # model="gpt-4.1",
+                model=self.model_name,
+                max_tokens=1000
             )
             
             # 비동기 함수 동기적 호출
@@ -150,7 +405,7 @@ class PDFBatchProcessor:
             return result
             
         except Exception as e:
-            print(f"Error processing page {page_num}: {str(e)}")
+            print(f"Error processing page {page_num}: {type(e).__name__}: {str(e)}")
             
             with self.lock:
                 self.processed_pages += 1
@@ -265,10 +520,7 @@ class PDFBatchProcessor:
     def process_pdf_streaming(self):
         """
         PDF를 배치 단위로 처리하면서 실시간으로 결과를 스트리밍
-        배치 내부에서도 페이지별 실시간 출력
-        
-        Yields:
-            str: 처리된 페이지 텍스트 또는 상태 메시지
+        과한 메타데이터 yield 최소화
         """
         self.start_time = time.time()
         self.total_pages = self.get_total_pages()
@@ -279,72 +531,66 @@ class PDFBatchProcessor:
             yield "❌ PDF에서 페이지를 찾을 수 없습니다."
             return
         
-        # 🆕 JSON 형태로 초기 프로그레스 정보 전송
-        yield f"PROGRESS_DATA:{{\"type\":\"init\",\"total_pages\":{self.total_pages}}}"
-        
-        yield f"📄 PDF 문서 분석을 시작합니다 (총 {self.total_pages}페이지)\n\n"
+        # 🔥 간소화: 시작 메시지만
+        yield f"📄 PDF 문서 분석 시작 (총 {self.total_pages}페이지)"
         
         # 1. 페이지 데이터 생성
         if not self.create_page_data():
             yield "❌ PDF 페이지 데이터 생성에 실패했습니다."
             return
         
-        yield f"✅ 페이지 데이터 생성 완료\n\n"
+        # 🔥 주석 처리: 불필요한 메타정보
+        # yield f"✅ 페이지 데이터 생성 완료\n\n"
         
         # 2. 배치별 처리 및 실시간 스트리밍
         batch_count = 0
         total_batches = (self.total_pages + PDF_BATCH_SIZE - 1) // PDF_BATCH_SIZE
         
-        yield f"🔄 총 {total_batches}개 배치로 처리합니다\n\n"
+        # 🔥 주석 처리: 배치 정보
+        # yield f"🔄 총 {total_batches}개 배치로 처리합니다\n\n"
         
         # 배치 단위로 순차 처리
         for batch_start in range(1, self.total_pages + 1, PDF_BATCH_SIZE):
             # 타임아웃 체크
             elapsed_time = time.time() - self.start_time
             if elapsed_time > PDF_PROCESSING_TIMEOUT:
-                yield f"⏰ 처리 시간 초과 ({elapsed_time:.1f}초 > {PDF_PROCESSING_TIMEOUT}초)\n"
-                yield f"지금까지 처리된 {self.processed_pages}페이지의 결과를 반환합니다.\n\n"
+                # 🔥 간소화: 타임아웃 메시지만
+                yield f"⏰ 처리 시간 초과 ({elapsed_time:.1f}초)"
                 break
             
             batch_end = min(batch_start + PDF_BATCH_SIZE - 1, self.total_pages)
             page_numbers = list(range(batch_start, batch_end + 1))
             batch_count += 1
             
-            # 🆕 배치 시작시 프로그레스 업데이트 전송
-            yield f"PROGRESS_DATA:{{\"type\":\"update\",\"processed_pages\":{self.processed_pages},\"total_pages\":{self.total_pages}}}"
+            # 🔥 주석 처리: 배치별 진행률
+            # yield f"📋 배치 {batch_count}/{total_batches} 처리 중: 페이지 {batch_start}-{batch_end}\n\n"
             
-            yield f"📋 배치 {batch_count}/{total_batches} 처리 중: 페이지 {batch_start}-{batch_end}\n\n"
-            
-            # 배치 내부 실시간 스트리밍 처리
+            # 🆕 배치 내부 실시간 스트리밍 처리 (페이지 텍스트만)
             try:
-                # 페이지별 실시간 결과를 그대로 전달
+                # 페이지별 실제 텍스트만 전달
                 for page_result in self.process_batch_streaming(page_numbers):
                     yield page_result
                 
-                yield f"✅ 배치 {batch_count} 완료\n\n"
+                # 🔥 주석 처리: 배치 완료 메시지
+                # yield f"✅ 배치 {batch_count} 완료\n\n"
                 
             except Exception as e:
                 print(f"Error processing batch {batch_count}: {str(e)}")
-                yield f"❌ 배치 {batch_count} 처리 중 오류 발생: {str(e)}\n\n"
+                yield f"❌ 배치 {batch_count} 처리 오류"
                 break
         
-        # 처리 완료 요약
-        processing_time = time.time() - self.start_time
-        completed = self.processed_pages >= self.total_pages
-        
-        # 🆕 최종 프로그레스 완료 전송
-        yield f"PROGRESS_DATA:{{\"type\":\"complete\",\"processed_pages\":{self.processed_pages},\"total_pages\":{self.total_pages}}}"
-        
-        yield f"## 📊 처리 완료 요약\n\n"
-        yield f"- 총 페이지: {self.total_pages}페이지\n"
-        yield f"- 처리 완료: {self.processed_pages}페이지\n"
-        yield f"- 처리 시간: {processing_time:.1f}초\n"
-        yield f"- 상태: {'✅ 완료' if completed else '⚠️ 부분 완료 (타임아웃)'}\n\n"
+        # 🔥 주석 처리: 상세한 완료 요약
+        # processing_time = time.time() - self.start_time
+        # completed = self.processed_pages >= self.total_pages
+        # yield f"## 📊 처리 완료 요약\n\n"
+        # yield f"- 총 페이지: {self.total_pages}페이지\n"
+        # yield f"- 처리 완료: {self.processed_pages}페이지\n"
+        # yield f"- 처리 시간: {processing_time:.1f}초\n"
+        # yield f"- 상태: {'✅ 완료' if completed else '⚠️ 부분 완료 (타임아웃)'}\n\n"
         
         print(f"\n=== PDF Streaming Processing Summary ===")
         print(f"Total pages processed: {self.processed_pages}/{self.total_pages}")
-        print(f"Total processing time: {processing_time:.1f}s")
-        print(f"Status: {'Completed' if completed else 'Partial (timeout)'}")
+        print(f"Status: {'Completed' if self.processed_pages >= self.total_pages else 'Partial (timeout)'}")
 
     def process_pdf_in_batches(self) -> Tuple[List[Dict[str, Any]], bool]:
         """
@@ -423,3 +669,44 @@ class PDFBatchProcessor:
             'progress_percentage': (self.processed_pages / max(self.total_pages, 1)) * 100,
             'elapsed_time': time.time() - self.start_time if self.start_time else 0
         }
+
+    async def process_to_chat_after_completion(self, prompt: str):
+        """
+        PDF 이미지 처리 완료 후 채팅 응답 생성
+        기존 pdf_streaming_generator와 함께 사용하기 위한 추가 함수
+        """
+        # 1. 기존 배치 처리로 텍스트 추출
+        results, completed = self.process_pdf_in_batches()
+        
+        if not results:
+            raise ValueError("Failed to process PDF pages")
+        
+        # 2. 텍스트 합치기
+        combined_text = "\n\n".join([
+            f"=== 페이지 {page.get('page_number', 'N/A')} ===\n{page.get('text_content', '')}"
+            for page in results
+            if page.get('success') and page.get('text_content', '').strip()
+        ])
+        
+        # 3. ChatRequest 생성
+        system_message = f"""당신은 PDF 문서 분석 전문가입니다. 
+다음 PDF 문서({self.filename})의 내용을 바탕으로 사용자의 질문에 정확하고 자세하게 답변해주세요.
+
+문서 내용 (이미지 OCR 처리):
+{combined_text}
+
+답변 시 문서에서 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
+        
+        chat_request = ChatRequest(
+            messages=[
+                ChatMessage(role="system", content=system_message),
+                ChatMessage(role="user", content=prompt)
+            ],
+            model=self.model_name,
+            temperature=0.7,
+            max_tokens=1000,
+            stream=True
+        )
+        
+        # 4. services.py의 기존 함수 호출
+        return await generate_streaming_response(chat_request)
