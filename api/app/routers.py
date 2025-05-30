@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File, Form
 from .models import ChatRequest, ChatResponse, ChatMessage, ImageAnalysisRequest, ImageAnalysisResponse, WebSearchRequest, WebSearchResponse
-from .services import generate_chat_response, generate_streaming_response, analyze_image, analyze_image_streaming, perform_web_search, detect_file_type, convert_pdf_page_to_base64
+from .services import generate_chat_response, generate_streaming_response, analyze_image, analyze_image_streaming, perform_web_search, detect_file_type, convert_pdf_page_to_base64, chunk_pdf_document
 from fastapi.responses import StreamingResponse
 from typing import List, Optional, AsyncGenerator
 import base64
@@ -432,6 +432,24 @@ async def chat_with_pdf(
         
         extracted_text = get_combined_text_from_cache(filename)
         print(f"Found cached text length: {len(extracted_text)}")
+
+        # 🔧 청킹 시도 - 실패해도 기존 방식으로 진행
+        try:
+            chunks = await chunk_pdf_document(filename)
+            print(f"Successfully chunked into {len(chunks)} chunks")
+            
+            # 🆕 캐시에 청크 정보 저장
+            GLOBAL_PDF_CACHE[filename]['semantic_chunks'] = chunks
+            
+            # TODO: 향후 Top-k 검색으로 관련 청크만 선별
+            # 현재는 전체 텍스트 사용 (기존 방식 유지)
+            
+        except Exception as chunk_error:
+            print(f"Chunking failed, using full text: {str(chunk_error)}")
+            # 청킹 실패해도 계속 진행
+
+        return
+
         
         # 시스템 메시지 생성
         system_message = f"""당신은 PDF 문서 분석 전문가입니다. 

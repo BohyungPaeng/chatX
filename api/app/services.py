@@ -171,6 +171,7 @@ async def generate_chat_response(request: ChatRequest) -> ChatResponse:
             model=model,
             usage={"error": str(e)}
         )
+    
 async def _get_pwc_model(model_name: str) -> 'AsyncPwCGPTModel':
     """PWC GPT 모델 인스턴스를 생성하고 헬스체크를 수행합니다."""
     from .pwc_gpt import AsyncPwCGPTModel
@@ -531,3 +532,34 @@ async def perform_web_search(request: WebSearchRequest) -> WebSearchResponse:
             model=model,
             usage={"error": str(e)}
         )
+    
+async def chunk_pdf_document(filename: str):# -> List:
+    """
+    PDF 문서를 semantic chunking으로 분할
+    캐시에서 직접 데이터를 가져와서 처리
+    
+    Args:
+        filename: PDF 파일명
+    
+    Returns:
+        List[Chunk]: 분할된 청크 목록
+    """
+    try:
+        from .doc_chunker import DocumentChunker
+        from .routers import GLOBAL_PDF_CACHE  # 🔧 여기서 import
+        
+        # 캐시 확인
+        if filename not in GLOBAL_PDF_CACHE:
+            raise ValueError(f"PDF 캐시를 찾을 수 없습니다: {filename}")
+        
+        # 청킹 수행 (캐시 데이터를 직접 전달)
+        chunker = DocumentChunker()
+        chunks = chunker.chunk_document_with_cache(GLOBAL_PDF_CACHE[filename], filename)
+        
+        print(f"Successfully chunked {filename}: {len(chunks)} chunks created")
+        
+        return chunks
+        
+    except Exception as e:
+        print(f"Error chunking PDF document {filename}: {str(e)}")
+        raise Exception(f"PDF 청킹 중 오류: {str(e)}")
