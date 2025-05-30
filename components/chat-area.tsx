@@ -85,7 +85,7 @@ interface SavedChatSession {
 }
 
 // API URL 설정
-const API_URL = "http://localhost:8000/api";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 // localStorage 키 상수
 const CHAT_SESSIONS_KEY = "chatx_chat_sessions";

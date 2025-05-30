@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Image, Upload, Loader2, X } from "lucide-react";
 
-const API_URL = "http://localhost:8000/api";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 export function ImageAnalysis() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
