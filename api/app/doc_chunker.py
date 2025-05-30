@@ -100,35 +100,21 @@ class DocumentChunker:
     
     def _chunk_simple(self, full_text: str, page_mapping: List[dict], filename: str) -> List[Chunk]:
         """간단한 길이 기반 청킹 (langchain RecursiveCharacterTextSplitter 스타일)"""
-        try:
-            from langchain.text_splitter import RecursiveCharacterTextSplitter
-            
-            # 하이퍼파라미터
-            chunk_size = 800
-            chunk_overlap = 100
-            
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=chunk_size,
-                chunk_overlap=chunk_overlap,
-                length_function=len,
-                separators=["\n\n", "\n", ".", "!", "?", " ", ""]
-            )
-            
-            text_chunks = splitter.split_text(full_text)
-            print(f"📏 Simple 청킹: {len(text_chunks)}개 청크 (크기: {chunk_size}, 겹침: {chunk_overlap})")
-            
-        except ImportError:
-            print("⚠️ langchain 없음, 기본 구현 사용")
-            # 기본 구현
-            chunk_size = 800
-            chunk_overlap = 100
-            text_chunks = []
-            
-            for i in range(0, len(full_text), chunk_size - chunk_overlap):
-                chunk = full_text[i:i + chunk_size]
-                if chunk.strip():
-                    text_chunks.append(chunk)
+        from .tools.langchain_chunker import RecursiveCharacterTextSplitter
+        # 하이퍼파라미터
+        chunk_size = 400  # 변경된 값
+        chunk_overlap = 100  # 변경된 값
         
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            length_function=len,
+            separators=["\n\n", "\n", ".", "!", "?", " ", ""]
+        )
+            
+        text_chunks = splitter.split_text(full_text)
+        print(f"📏 Simple 청킹: {len(text_chunks)}개 청크 (크기: {chunk_size}, 겹침: {chunk_overlap})")
+            
         # 청크를 Chunk 객체로 변환
         chunks = []
         for i, chunk_text in enumerate(text_chunks):
@@ -423,3 +409,5 @@ class DocumentChunker:
         if not w1 or not w2:
             return 0.0
         return len(w1.intersection(w2)) / len(w1.union(w2))
+    
+

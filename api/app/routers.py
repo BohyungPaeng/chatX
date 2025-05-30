@@ -259,158 +259,6 @@ def get_combined_text_from_cache(filename: str) -> str:
     
     return ""
 
-# 🆕 Readable PDF Streaming + Cache 함수
-async def readable_pdf_streaming_with_cache(pdf_content: bytes, filename: str, model: str):
-    """
-    Readable PDF를 빠른 스트리밍으로 처리하면서 메타데이터 캐시 저장
-    """
-    try:
-        from .pdf_processor import extract_text_from_readable_pdf
-        import time
-        
-        print(f"🔄 Readable PDF streaming for: {filename}")
-        
-        # 텍스트 추출
-        extracted_pages = extract_text_from_readable_pdf(pdf_content, filename)
-        
-        if not extracted_pages:
-            yield f"data: {json.dumps({'content': '❌ 텍스트 추출 실패', 'is_streaming': False, 'model': model, 'error': 'extraction_failed'})}\n\n"
-            yield f"data: [DONE]\n\n"
-            return
-        
-        total_pages = len(extracted_pages)
-        page_texts = []  # 캐시용 페이지 텍스트들
-        chunk_count = 0
-        
-        # 시작 메시지
-        chunk_count += 1
-        start_msg = f"📄 읽기 가능한 PDF 분석 시작 (총 {total_pages}페이지)"
-        print(f"📦 RAW[{chunk_count}]: {len(start_msg)}chars | {start_msg}")
-        yield f"data: {json.dumps({'content': start_msg, 'is_streaming': True, 'model': model})}\n\n"
-        
-        # 0.1초 정도 지연으로 스트리밍 체감
-        time.sleep(0.1)
-        
-        # 페이지별 빠른 스트리밍
-        for i, page in enumerate(extracted_pages):
-            if page.get('text_content', '').strip():
-                chunk_count += 1
-                
-                # 실제 페이지 텍스트 포맷팅 (image processing과 동일하게)
-                page_text = f"## 📄 페이지 {page['page_number']}\n\n{page['text_content']}"
-                page_texts.append(page_text)
-                
-                print(f"📦 RAW[{chunk_count}]: {len(page_text)}chars | {page_text[:100]}...")
-                print(f"📄 Page found in chunk {chunk_count}: {len(page_text)}chars")
-                
-                # SSE 포맷으로 전달
-                yield f"data: {json.dumps({'content': page_text, 'is_streaming': True, 'model': model})}\n\n"
-                
-                # 빠른 스트리밍을 위한 짧은 지연
-                time.sleep(0.05)
-        
-        # 메타데이터로 캐시 저장 (image processing과 동일한 구조)
-        if page_texts:
-            cache_data = {
-                'page_texts': page_texts,
-                'total_pages': len(page_texts),
-                'filename': filename,
-                'processing_method': 'direct_text_extraction'
-            }
-            
-            GLOBAL_PDF_CACHE[filename] = cache_data
-            print(f"💾 Metadata cache: {filename} -> {len(page_texts)} pages stored")
-            
-            final_notice = {
-                "content": "",
-                "is_streaming": False,
-                "cached": True,
-                "pages_found": len(page_texts)
-            }
-        else:
-            print(f"⚠️ No pages extracted")
-            final_notice = {
-                "content": "",
-                "is_streaming": False,
-                "cached": False,
-                "error": "no_pages_extracted"
-            }
-        
-        # SSE 완료
-        yield f"data: {json.dumps(final_notice)}\n\n"
-        yield f"data: [DONE]\n\n"
-        
-    except Exception as e:
-        print(f"💥 Readable streaming error: {str(e)}")
-        yield f"data: {json.dumps({'content': f'❌ 처리 오류: {str(e)}', 'is_streaming': False, 'model': model, 'error': str(e)})}\n\n"
-        yield f"data: [DONE]\n\n"
-
-# 🎯 단순하고 효과적인 Image Processing Streaming + Cache 함수
-async def image_pdf_streaming_with_cache(
-    processor: PDFBatchProcessor, filename: str
-) -> AsyncGenerator[str, None]:
-    """
-    SSE 포맷 유지하면서 실제 페이지 텍스트만 간단히 캐시 저장
-    """
-    try:
-        page_texts = []  # 실제 페이지 텍스트만 저장
-        chunk_count = 0
-        
-        print(f"🔄 Simple streaming + caching for: {filename}")
-        
-        for raw_text_chunk in processor.process_pdf_streaming():
-            chunk_count += 1
-            print(f"📦 RAW[{chunk_count}]: {len(raw_text_chunk)}chars | {raw_text_chunk[:100]}...")
-            
-            # 1) SSE 포맷으로 모든 청크 전달 (기존 동작 유지)
-            json_chunk = {
-                "content": raw_text_chunk,
-                "is_streaming": True,
-                "model": processor.model_name
-            }
-            yield f"data: {json.dumps(json_chunk)}\n\n"
-            
-            # 2) 페이지 텍스트만 간단히 수집
-            if "## 📄 페이지" in raw_text_chunk:
-                print(f"📄 Page found in chunk {chunk_count}: {len(raw_text_chunk)}chars")
-                page_texts.append(raw_text_chunk)
-        
-        # 3) 메타데이터로 캐시 저장 (필요할 때 combined_text 생성 가능)
-        if page_texts:
-            cache_data = {
-                'page_texts': page_texts,
-                'total_pages': len(page_texts),
-                'filename': filename,
-                'processing_method': 'image_ocr_streaming'
-            }
-            
-            GLOBAL_PDF_CACHE[filename] = cache_data
-            print(f"💾 Metadata cache: {filename} -> {len(page_texts)} pages stored")
-            
-            final_notice = {
-                "content": "",
-                "is_streaming": False,
-                "cached": True,
-                "pages_found": len(page_texts)
-            }
-        else:
-            print(f"⚠️ No pages found in {chunk_count} chunks")
-            final_notice = {
-                "content": "",
-                "is_streaming": False,
-                "cached": False,
-                "error": "no_pages_found"
-            }
-        
-        # SSE 완료
-        yield f"data: {json.dumps(final_notice)}\n\n"
-        yield "data: [DONE]\n\n"
-        
-    except Exception as e:
-        print(f"💥 Simple streaming error: {str(e)}")
-        yield f"data: {json.dumps({'content': f'오류: {str(e)}', 'is_streaming': False, 'error': str(e)})}\n\n"
-        yield "data: [DONE]\n\n"
-
 @router.post("/chat-with-pdf")
 async def chat_with_pdf(
     filename: str = Form(...),
@@ -421,6 +269,8 @@ async def chat_with_pdf(
     """
     글로벌 캐시에서 PDF 텍스트를 가져와서 채팅 응답 생성
     """
+    from .rag_engine import SearchIndex, CitationFormatter, search_and_format
+
     try:
         print(f"=== Chat with PDF Started ===")
         print(f"Filename: {filename}, Model: {model}, Stream: {stream}")
@@ -432,32 +282,33 @@ async def chat_with_pdf(
         extracted_text = get_combined_text_from_cache(filename)
         print(f"Found cached text length: {len(extracted_text)}")
 
-        # 🔧 청킹 시도 - 실패해도 기존 방식으로 진행
-        try:
+        chunks = GLOBAL_PDF_CACHE[filename].get('semantic_chunks', [])
+        if not chunks:
+            # 🔧 청킹 시도 - 실패해도 기존 방식으로 진행
             chunks = await chunk_pdf_document(filename)
-            print(f"Successfully chunked into {len(chunks)} chunks")
-            
-            # 🆕 캐시에 청크 정보 저장
             GLOBAL_PDF_CACHE[filename]['semantic_chunks'] = chunks
-            
-            # TODO: 향후 Top-k 검색으로 관련 청크만 선별
-            # 현재는 전체 텍스트 사용 (기존 방식 유지)
-            
-        except Exception as chunk_error:
-            print(f"Chunking failed, using full text: {str(chunk_error)}")
-            # 청킹 실패해도 계속 진행
 
-        return
-
+        print(f"Using cached {len(chunks)} chunks")
         
-        # 시스템 메시지 생성
-        system_message = f"""당신은 PDF 문서 분석 전문가입니다. 
-다음 PDF 문서({filename})의 내용을 바탕으로 사용자의 질문에 정확하고 자세하게 답변해주세요.
+        # TODO: 향후 Top-k 검색으로 관련 청크만 선별
+        # 현재는 전체 텍스트 사용 (기존 방식 유지)
+        search_index = SearchIndex(chunks)
+        system_message, search_results = search_and_format(search_index, prompt, filename, top_k=5)
+        if search_results:
+            print(f"🎯 Top-5 검색 결과:")
+            for result in search_results:
+                print(f"  {result.citation}: {result.score:.3f} - {result.chunk.content[:100]}...")
+        else:
+            print("⚠️ 검색 결과 없음, 전체 문서 사용")
+        
+#         # 시스템 메시지 생성
+#         system_message = f"""당신은 PDF 문서 분석 전문가입니다. 
+# 다음 PDF 문서({filename})의 내용을 바탕으로 사용자의 질문에 정확하고 자세하게 답변해주세요.
 
-문서 내용:
-{extracted_text}
+# 문서 내용:
+# {extracted_text}
 
-답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
+# 답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
         
         # ChatRequest 생성
         chat_request = ChatRequest(
