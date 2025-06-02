@@ -269,7 +269,7 @@ async def chat_with_pdf(
     """
     글로벌 캐시에서 PDF 텍스트를 가져와서 채팅 응답 생성
     """
-    from .rag_engine import SearchIndex, CitationFormatter, search_and_format
+    from .rag_engine import SearchIndex, search_and_generate_system_message
 
     try:
         print(f"=== Chat with PDF Started ===")
@@ -290,10 +290,11 @@ async def chat_with_pdf(
 
         print(f"Using cached {len(chunks)} chunks")
         
-        # TODO: 향후 Top-k 검색으로 관련 청크만 선별
-        # 현재는 전체 텍스트 사용 (기존 방식 유지)
+        # 🆕 통합 검색 및 시스템 메시지 생성 (페이지 컨텍스트 모드)
         search_index = SearchIndex(chunks)
-        system_message, search_results = search_and_format(search_index, prompt, filename, top_k=5)
+        system_message, search_results = search_and_generate_system_message(
+            search_index, prompt, filename, use_page_context=True, top_k=5
+        )
         if search_results:
             print(f"🎯 Top-5 검색 결과:")
             for result in search_results:
