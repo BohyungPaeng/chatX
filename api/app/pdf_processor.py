@@ -368,6 +368,15 @@ class PDFBatchProcessor:
             Preserve the original language and structure as much as possible. Do not translate or modify the content unnecessarily.
             The resulting output should provide clear, structured information exactly as presented in the original document.
             """
+
+            if self.model_name == "gpt-4.1":
+                ocr_system_prompt = """Please extract and transcribe all visible text from this image exactly as shown. This is for accessibility purposes.
+                "Extract text and respond in this exact format:
+                ---START---
+                [extracted text here]
+                ---END---
+                Do not stop until you reach END marker"
+                """
             analysis_request = ImageAnalysisRequest(
                 image_url=image_url,
                 prompt=f"해당 페이지 ({page_num})의 텍스트를 정확하게 추출해주세요. 표, 목록, 제목 등의 구조를 유지하면서 읽기 쉽게 정리해주세요.",
@@ -375,7 +384,7 @@ class PDFBatchProcessor:
                 # model="gpt-4o",
                 # model="gpt-4.1",
                 model=self.model_name,
-                max_tokens=1000
+                max_tokens=2048
             )
             
             # 비동기 함수 동기적 호출

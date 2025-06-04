@@ -305,7 +305,6 @@ export function ChatArea({
 
   // 사용 가능한 모델 목록 - 프론트엔드에 고정
   const models: Model[] = [
-    { id: "gpt-4.1", name: "GPT-4.1" },
     { id: "gpt-4o", name: "GPT-4o" },
     { id: "azure.gpt-4o-2024-11-20", name: "PWCGPT-4o" },
     { id: "o4-mini", name: "O4-mini" },

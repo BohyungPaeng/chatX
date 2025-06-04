@@ -238,9 +238,28 @@ async def analyze_image(request: ImageAnalysisRequest) -> ImageAnalysisResponse:
                 ]
             })
             
-            response = client.chat.completions.create(
-                model=model, messages=messages, max_tokens=request.max_tokens
-            )
+            # 🔧 모델별 차별화: 토큰 수와 파라미터만
+            api_params = {
+                "model": model,
+                "messages": messages
+            }
+            
+            # 모델별 토큰 설정
+            if model == "o3" or model == "o4-mini":
+                # O3: max_completion_tokens + 더 많은 토큰
+                api_params["max_completion_tokens"] = min(request.max_tokens * 2, 2000)
+                print(f"🔧 O3 사용: max_completion_tokens={api_params['max_completion_tokens']}")
+            elif model == "gpt-4.1":
+                # GPT-4.1: 더 많은 토큰으로 끊김 방지
+                api_params["max_tokens"] = min(request.max_tokens * 3, 3000)
+                print(f"🔧 GPT-4.1 사용: max_tokens={api_params['max_tokens']} (끊김 방지)")
+            else:
+                # GPT-4o 등: 기본값 유지
+                api_params["max_tokens"] = request.max_tokens
+                print(f"🔧 {model} 사용: max_tokens={api_params['max_tokens']}")
+            
+            # API 호출
+            response = client.chat.completions.create(**api_params)
             
             content = response.choices[0].message.content
             usage = {
