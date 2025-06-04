@@ -73,8 +73,8 @@ interface FileUploadState {
   uploadedUrl: string | null;
 }
 
-// API URL 설정 - 🔧 수정: 8000번 포트로 변경
-const API_URL = "http://localhost:8000/api";
+// API URL 설정
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 // 파일을 base64로 변환하는 유틸리티 함수
 const fileToBase64 = (file: File): Promise<string> => {
