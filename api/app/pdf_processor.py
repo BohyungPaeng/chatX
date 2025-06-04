@@ -15,7 +15,7 @@ from .models import ImageAnalysisRequest, ChatRequest, ChatMessage
 
 # PDF 처리 관련 상수
 PDF_BATCH_SIZE = 4  # 배치당 처리할 페이지 수
-PDF_PROCESSING_TIMEOUT = 30  # 처리 타임아웃 (초)
+PDF_PROCESSING_TIMEOUT = 60  # 처리 타임아웃 (초)
 PDF_MAX_FILE_SIZE = 50 * 1024 * 1024  # 최대 파일 크기 (50MB)
 TOP_K_MAX = 10  # 검색 결과 최대 개수
 TOP_K_MIN = 1   # 검색 결과 최소 개수
