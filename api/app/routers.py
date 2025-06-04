@@ -57,6 +57,18 @@ def process_pdf_in_batches(
                 status_code=400, 
                 detail=f"파일 크기가 너무 큽니다. 최대 {PDF_MAX_FILE_SIZE // (1024*1024)}MB까지 지원합니다."
             )
+        # force_image_processing = False
+        # # 1. 캐시 체크 (force 옵션이 아닐 때만)
+        # if not force_image_processing and pdf_cache_manager.exists(file.filename):
+        #     print(f"✅ 캐시 hit: {file.filename}")
+        #     cache_data = pdf_cache_manager.load(file.filename)
+        #     return {
+        #         "status": "cached",
+        #         "filename": file.filename,
+        #         "processing_method": cache_data.get("processing_method", "unknown"),
+        #         "cached": True,
+        #         "total_pages": cache_data.get("total_pages", 0)
+        #     } #FIXME: stream=True라도, False일때처럼한번에 반환하여 프론트 연동이 되지않음 차후 ui작업 시 한번에 처리
 
         # 파일 내용 읽기
         pdf_content = file.file.read()
