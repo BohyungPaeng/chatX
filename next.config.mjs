@@ -1,6 +1,5 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export',  // 추가 for vercel
   eslint: {
     ignoreDuringBuilds: true,
   },
