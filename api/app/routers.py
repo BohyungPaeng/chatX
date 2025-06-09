@@ -191,34 +191,14 @@ async def image_generation(
         import requests
 
         url = LITELLM_URL + "/images/generations"
-        # import tomllib
-        # import os
-        # current_dir = os.path.dirname(os.path.abspath(__file__))
-        # toml_path = os.path.join(current_dir, "..", "..", "docs", "prompt_bank.toml")
-        # with open(toml_path, "rb") as f:
-        #     prompts = tomllib.load(f)
-        # tmp_assistant = prompts["imagegen"]["tmp_assistant"]
-        # theme_list =  prompts["imagegen"]["themes"]
-        tmp_assistant = """세련된 AI 어시스턴트 캐릭터 아이콘 — translucent glass-morph rounded micro-chip head, neon-blue & cyan circuitry glowing like flowing data;
-        a tiny speech-balloon hovering above the head containing stacked-document pictograms symbolising knowledge comprehension, summarisation and refinement.
-        Friendly mini-robot totem body; subtle **{theme}** hinting at the **{title}**;
-        Clean white or transparent background, square 1:1 aspect-ratio,
-        high-detail vector-style, smooth gradients, minimalistic ultra-clean UI icon, flat-yet-layered depth, cinematic rim-light.
-        no realistic human faces, no photorealistic skin texture, no gore, no hate symbols, no offensive gestures, no nudity, no explicit violence.
-        """
-
-        theme_list = [
-        "golden tai-chi swirl and wafer-pattern detail",
-        "green leaf circuit motif",
-        "silver gear & blueprint-line motif",
-        "holographic DNA helix motif",
-        "azure globe grid motif",
-        "violet neural-network mesh motif",
-        "copper satellite-dish waveform motif",
-        "teal wave-crest motif",
-        "amber book-spine motif",
-        "crimson shield lattice motif"
-        ]
+        import tomllib
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        toml_path = os.path.join(current_dir, "..", "..", "docs", "prompt_bank.toml")
+        with open(toml_path, "rb") as f:
+            prompts = tomllib.load(f)
+        tmp_assistant = prompts["imagegen"]["tmp_assistant"]
+        theme_list =  prompts["imagegen"]["themes"]
 
         headers = {
             "User-Agent": "curl/8.9.1",
@@ -257,7 +237,8 @@ async def image_generation(
 
         raw_b64 = response.json()['data'][0]['b64_json']
     except Exception as e:
-        raise HTTPException(500, detail=f"icon generation failed: {e}")
+        print(f"🔥 Icon generation error: {e}")  # 서버 로그용
+        raise HTTPException(400, detail=f"Icon generation failed: {str(e)}")
 
     import base64, io
     from PIL import Image

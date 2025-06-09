@@ -20,6 +20,7 @@ import { ChatMessage, Message, Citation, PDFPage, PDFProgress } from "@/componen
 import { useMobile } from "@/hooks/use-mobile";
 import { useApiTimeout } from "@/hooks/use-timeout";
 import { useImageGeneration } from "@/hooks/use-image-generation";
+import { PDFGreetingMessage } from "@/components/pdf-greeting-message";
 
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
@@ -342,15 +343,22 @@ export function ChatArea({
     return !!attachedImage;
   };
 
+  // 1. addAutoGreetingMessage 함수에 onMasterSettingSubmit 핸들러 추가
   const addAutoGreetingMessage = useCallback((filename: string) => {
     console.log("🎉 Adding auto greeting message for:", filename);
     
     const greetingMessage: Message = {
       id: Date.now(),
       role: "system",
-      content: `📄 **${filename}** 분석이 완료되었습니다.\n\n본 대화 세션의 목표를 공유해주시면 선생님을 더 잘 도와드릴 수 있습니다. 😊`,
+      content: "",
       isAutoMessage: true,
-      customAvatar: iconSrc || undefined
+      customAvatar: iconSrc || undefined,
+      fileName: filename,
+      messageType: "pdf-greeting",
+      onMasterSettingSubmit: (prompt: string) => {  // ← 새로 추가
+        setInput(prompt); // input에 생성된 프롬프트 설정
+        console.log("마스터 설정 프롬프트:", prompt);
+      }
     };
 
     setMessages(prev => [...prev, greetingMessage]);
@@ -1542,7 +1550,8 @@ export function ChatArea({
           </div>
         )}
 
-        {isLoading && !isStreaming && (
+        {/* AI 응답 로딩 (아이콘 로딩과 분리) */}
+        {isLoading && !isStreaming && !iconLoading && (
           <div className="text-center py-2">
             <span className="text-sm text-gray-500 dark:text-gray-400">
               AI가 응답 중입니다...
