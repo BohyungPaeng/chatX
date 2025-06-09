@@ -137,7 +137,7 @@ export function ChatArea({
     uploadedUrl: null
   });
   // 이미지생성
-  const { iconSrc, loading: iconLoading, error: iconError, generate: generateIcon, clearIcon } = useImageGeneration();
+  const { iconSrc, loading: isIconGenerating, error: iconError, generate: generateIcon, clearIcon } = useImageGeneration();
 
   // PDF 업로드
   const { getTimeoutDuration } = useApiTimeout(); 
@@ -343,7 +343,10 @@ export function ChatArea({
     return !!attachedImage;
   };
 
-  // 1. addAutoGreetingMessage 함수에 onMasterSettingSubmit 핸들러 추가
+  // 1. 상태 추가
+  const [masterSystemPrompt, setMasterSystemPrompt] = useState<string>("");
+
+  // 2. addAutoGreetingMessage 함수 수정
   const addAutoGreetingMessage = useCallback((filename: string) => {
     console.log("🎉 Adding auto greeting message for:", filename);
     
@@ -355,9 +358,17 @@ export function ChatArea({
       customAvatar: iconSrc || undefined,
       fileName: filename,
       messageType: "pdf-greeting",
-      onMasterSettingSubmit: (prompt: string) => {  // ← 새로 추가
-        setInput(prompt); // input에 생성된 프롬프트 설정
-        console.log("마스터 설정 프롬프트:", prompt);
+      onMasterSettingSubmit: (prompt: string) => {
+        // 플래그로 구분
+        if (prompt.startsWith('SYSTEM_PROMPT:')) {
+          const systemPrompt = prompt.replace('SYSTEM_PROMPT:', '');
+          setMasterSystemPrompt(systemPrompt);
+          console.log("📋 마스터 시스템 프롬프트 설정:", systemPrompt);
+        } else {
+          // 추천 질문은 바로 입력창에
+          setInput(prompt);
+          console.log("💡 추천 질문 선택:", prompt);
+        }
       }
     };
 
@@ -601,6 +612,8 @@ export function ChatArea({
       setError(null);
   
       // PDF 파일이면 즉시 선행 add-on 실행 (파일 직접 전달)
+      // 🆕 아이콘 생성 시작할 때 로딩 시작
+      setIsLoading(true);
       console.log("🎨 Starting icon generation for:", file.name);
       generateIcon(file.name).catch(err => {
         console.error("Icon generation failed:", err);
@@ -740,6 +753,11 @@ export function ChatArea({
         formData.append("prompt", input || `이 ${fileTypeName}에 대해 자세히 설명해주세요.`);
         formData.append("model", selectedModel.id);
         formData.append("stream", "true");
+        // 🆕 마스터 시스템 프롬프트가 있으면 추가
+        if (masterSystemPrompt) {
+          formData.append("master_system_prompt", masterSystemPrompt);
+          console.log("📋 PDF 질문에 마스터 시스템 프롬프트 적용");
+        }
       } else {
         // 이미지용 FormData (기존 로직)
         formData.append(
@@ -1534,7 +1552,7 @@ export function ChatArea({
         })}
 
         {/* 아이콘 상태 표시 추가 (미리보기 영역 위에) */}
-        {iconLoading && (
+        {/* {iconLoading && (
           <div className="p-2 bg-blue-50 dark:bg-blue-900/20 text-center shrink-0">
             <span className="text-sm text-blue-600 dark:text-blue-400">
               🎨 파일 기반 아이콘 생성 중...
@@ -1548,16 +1566,18 @@ export function ChatArea({
               ⚠️ 아이콘 생성 실패: {iconError}
             </span>
           </div>
-        )}
+        )} */}
 
-        {/* AI 응답 로딩 (아이콘 로딩과 분리) */}
-        {isLoading && !isStreaming && !iconLoading && (
-          <div className="text-center py-2">
-            <span className="text-sm text-gray-500 dark:text-gray-400">
-              AI가 응답 중입니다...
+        {/* AI 응답 중 (스트리밍 포함) */}
+        {(isLoading || isStreaming) && (
+          <div className="p-2 bg-blue-50 dark:bg-blue-900/20 text-center shrink-0">
+            <span className="text-sm text-blue-600 dark:text-blue-400">
+              {isStreaming ? "🤖 AI가 응답 중입니다..." : "⚡ 처리 중입니다..."}
             </span>
           </div>
         )}
+
+        {/* 에러 표시 */}
         {error && (
           <div className="text-center py-3 px-4 my-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
             <span className="text-sm text-red-600 dark:text-red-400 font-medium">

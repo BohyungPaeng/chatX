@@ -358,6 +358,7 @@ def get_combined_text_from_cache(filename: str) -> str:
 async def chat_with_pdf(
     filename: str = Form(...),
     prompt: str = Form(...),
+    master_system_prompt: str = Form(""),  # 🆕 추가
     model: str = Form("azure.gpt-4o-2024-11-20"),
     stream: bool = Form(True)
 ):
@@ -390,6 +391,11 @@ async def chat_with_pdf(
         system_message, search_results = search_and_generate_system_message(
             search_index, prompt, filename, use_page_context=True, top_k=5
         )
+        # 마스터 시스템 프롬프트가 있으면 병합
+        if master_system_prompt:
+            system_message = f"{master_system_prompt}\n\n{system_message}"
+            print("설정된 SYSTEM_PROMPT:", system_message)
+
         if search_results:
             print(f"🎯 Top-5 검색 결과:")
             for result in search_results:
