@@ -41,18 +41,22 @@ export interface Message {
   pdfProgress?: PDFProgress;
   pdfPages?: PDFPage[];
   messageType?: "normal" | "pdf-progress" | "pdf-results";
+  isAutoMessage?: boolean;
+  customAvatar?: string;
 }
 
 interface ChatMessageProps {
   message: Message;
   isStreaming?: boolean;
   showImage?: boolean;
+  customAvatar?: string;
 }
 
 export function ChatMessage({
   message,
   isStreaming = false,
   showImage = false,
+  customAvatar,
 }: ChatMessageProps) {
   const isUser = message.role === "user";
   const [copiedMap, setCopiedMap] = useState<Record<string, boolean>>({});
@@ -187,9 +191,29 @@ export function ChatMessage({
   }, []);
 
   // 스타일 객체 정의
+  const getAvatarContent = () => {
+    const avatarSrc = message.customAvatar || customAvatar;
+    
+    if (avatarSrc) {
+      return (
+        <img 
+          src={avatarSrc} 
+          alt="Custom Avatar" 
+          className="h-5 w-5 rounded-full object-cover"
+        />
+      );
+    }
+    
+    return isUser ? (
+      <User className="h-5 w-5 text-white" />
+    ) : (
+      <Bot className="h-5 w-5 text-white" />
+    );
+  };
+
   const messageStyles = {
     container: `flex gap-4 ${isUser ? "flex-row-reverse" : ""}`,
-    avatar: `flex items-center justify-center flex-shrink-0 ${isUser ? "bg-orange-500" : "bg-gray-700"}`,
+    avatar: `flex items-center justify-center flex-shrink-0 ${isUser ? "bg-orange-500" : "bg-gray-700"} ${message.customAvatar || customAvatar ? "p-0" : ""}`,
     messageContent: `flex-1 flex items-start ${isUser ? "justify-end" : "justify-start"} flex-col ${isUser ? "items-end" : "items-start"}`,
     userMessage: "text-gray-700 dark:text-foreground whitespace-pre-line text-right",
     imageContainer: `mb-2 ${isUser ? "ml-auto" : "mr-auto"} max-w-xs`,
@@ -209,11 +233,7 @@ export function ChatMessage({
   return (
     <div className={messageStyles.container}>
       <Avatar className={messageStyles.avatar}>
-        {isUser ? (
-          <User className="h-5 w-5 text-white" />
-        ) : (
-          <Bot className="h-5 w-5 text-white" />
-        )}
+        {getAvatarContent()}
       </Avatar>
       
       <div className={messageStyles.messageContent}>

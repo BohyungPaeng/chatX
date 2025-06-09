@@ -189,11 +189,36 @@ async def image_generation(
         """ PWCGPT - IMAGE GENEATION, Not encapsulated YET... """
         from .config import LITELLM_KEY, LITELLM_URL
         import requests
-        
+
         url = LITELLM_URL + "/images/generations"
-        import tomllib
-        with open(r"C:\Codespace\chatX\docs\prompt_bank.toml", "rb") as f:
-            prompts = tomllib.load(f)
+        # import tomllib
+        # import os
+        # current_dir = os.path.dirname(os.path.abspath(__file__))
+        # toml_path = os.path.join(current_dir, "..", "..", "docs", "prompt_bank.toml")
+        # with open(toml_path, "rb") as f:
+        #     prompts = tomllib.load(f)
+        # tmp_assistant = prompts["imagegen"]["tmp_assistant"]
+        # theme_list =  prompts["imagegen"]["themes"]
+        tmp_assistant = """세련된 AI 어시스턴트 캐릭터 아이콘 — translucent glass-morph rounded micro-chip head, neon-blue & cyan circuitry glowing like flowing data;
+        a tiny speech-balloon hovering above the head containing stacked-document pictograms symbolising knowledge comprehension, summarisation and refinement.
+        Friendly mini-robot totem body; subtle **{theme}** hinting at the **{title}**;
+        Clean white or transparent background, square 1:1 aspect-ratio,
+        high-detail vector-style, smooth gradients, minimalistic ultra-clean UI icon, flat-yet-layered depth, cinematic rim-light.
+        no realistic human faces, no photorealistic skin texture, no gore, no hate symbols, no offensive gestures, no nudity, no explicit violence.
+        """
+
+        theme_list = [
+        "golden tai-chi swirl and wafer-pattern detail",
+        "green leaf circuit motif",
+        "silver gear & blueprint-line motif",
+        "holographic DNA helix motif",
+        "azure globe grid motif",
+        "violet neural-network mesh motif",
+        "copper satellite-dish waveform motif",
+        "teal wave-crest motif",
+        "amber book-spine motif",
+        "crimson shield lattice motif"
+        ]
 
         headers = {
             "User-Agent": "curl/8.9.1",
@@ -205,10 +230,9 @@ async def image_generation(
             "x-request-type": "sync",
         }
 
-        theme = __import__("random").choice(prompts["imagegen"]["themes"])
         body = {
             # "prompt": """세련된 AI 어시스턴트 캐릭터 아이콘 — translucent glass-morph rounded micro-chip head, neon-blue & cyan circuitry glowing like flowing data; a tiny speech-balloon hovering above the head that contains stacked-document pictograms symbolising knowledge comprehension, summarisation and refinement. Friendly mini-robot totem body; subtle **golden tai-chi swirl** and wafer-pattern detail hinting at the **Taiwan semiconductor industry**. Clean white or transparent background, square 1:1 aspect-ratio, high-detail vector-style, smooth gradients, minimalistic ultra-clean UI icon, flat-yet-layered depth, cinematic rim-light.""",
-            "prompt" : prompts["imagegen"]["tmp_assistant"].format(theme =theme, title=title),
+            "prompt" : tmp_assistant.format(theme =__import__("random").choice(theme_list), title=title),
             # "model": "azure.dall-e-3",
             # "model": "vertex_ai.imagen-3.0-generate-001",
             "model": "vertex_ai.imagen-3.0-fast-generate-001",

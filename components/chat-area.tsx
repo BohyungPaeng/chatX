@@ -19,6 +19,8 @@ import {
 import { ChatMessage, Message, Citation, PDFPage, PDFProgress } from "@/components/chat-message";
 import { useMobile } from "@/hooks/use-mobile";
 import { useApiTimeout } from "@/hooks/use-timeout";
+import { useImageGeneration } from "@/hooks/use-image-generation";
+
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
   DropdownMenu,
@@ -133,6 +135,10 @@ export function ChatArea({
     error: null,
     uploadedUrl: null
   });
+  // 이미지생성
+  const { iconSrc, loading: iconLoading, error: iconError, generate: generateIcon, clearIcon } = useImageGeneration();
+
+  // PDF 업로드
   const { getTimeoutDuration } = useApiTimeout(); 
   const timeoutDuration = getTimeoutDuration(selectedFile?.type);
   
@@ -303,8 +309,10 @@ export function ChatArea({
     }
   }, [isStreaming]);
 
+  
   // 사용 가능한 모델 목록 - 프론트엔드에 고정
   const models: Model[] = [
+    { id: "gpt-4.1", name: "GPT-4.1" },
     { id: "gpt-4o", name: "GPT-4o" },
     { id: "azure.gpt-4o-2024-11-20", name: "PWCGPT-4o" },
     { id: "o4-mini", name: "O4-mini" },
@@ -313,6 +321,7 @@ export function ChatArea({
 
   // 선택된 모델 상태 - 기본값을 PWCGPT-4o로 변경
   const [selectedModel, setSelectedModel] = useState<Model>(models[2]); // azure.gpt-4o-2024-11-20
+
 
   // 이미지가 화면에 표시되고 있는지 확인하는 함수
   const isImageVisible = (): boolean => {
@@ -332,18 +341,33 @@ export function ChatArea({
     ) as HTMLImageElement;
     return !!attachedImage;
   };
+
+  const addAutoGreetingMessage = useCallback((filename: string) => {
+    console.log("🎉 Adding auto greeting message for:", filename);
+    
+    const greetingMessage: Message = {
+      id: Date.now(),
+      role: "system",
+      content: `📄 **${filename}** 분석이 완료되었습니다.\n\n본 대화 세션의 목표를 공유해주시면 선생님을 더 잘 도와드릴 수 있습니다. 😊`,
+      isAutoMessage: true,
+      customAvatar: iconSrc || undefined
+    };
+
+    setMessages(prev => [...prev, greetingMessage]);
+  }, [iconSrc]);
+
   // PDF 파일 업로드 시 자동 실행되는 선행 처리 함수 (add-on 개념)
   // process-pdf-batch API를 호출하여 PDF를 스트리밍으로 처리하고 진행률 표시
   const processPDFUpload = async (pdfFile: File) => {
     try {
       setIsLoading(true);
       setError(null);
-  
+
       if (!pdfFile || pdfFile.type !== "application/pdf") {
         throw new Error("PDF 파일이 필요합니다.");
       }
-  
-      // PDF 진행률 메시지 추가
+
+        // PDF 진행률 메시지 추가
       const progressMessageId = messages.length + 1;
       const progressMessage: Message = {
         id: progressMessageId,
@@ -359,8 +383,8 @@ export function ChatArea({
           processingTime: 0
         }
       };
-  
-      // 결과 뷰어 메시지 추가
+
+        // 결과 뷰어 메시지 추가
       const resultsMessageId = messages.length + 2;
       const resultsMessage: Message = {
         id: resultsMessageId,
@@ -376,19 +400,19 @@ export function ChatArea({
           isError: false
         }
       };
-  
+
       setMessages(prev => [...prev, progressMessage, resultsMessage]);
       setIsStreaming(true);
-  
-      // FormData 생성
+
+        // FormData 생성
       const formData = new FormData();
       formData.append("file", pdfFile);
       formData.append("prompt", "이 PDF 문서를 분석해주세요.");
       formData.append("model", selectedModel.id);
       formData.append("force_image_processing", "false");
       formData.append("stream", "true");
-  
-      // API 요청 (process-pdf-batch)
+
+        // API 요청 (process-pdf-batch)
       const controller = new AbortController();
       const timeoutId = setTimeout(() => {
         controller.abort();
@@ -396,51 +420,53 @@ export function ChatArea({
         setIsLoading(false);
         setIsStreaming(false);
       }, timeoutDuration);
-  
+
       const response = await fetch(`${API_URL}/process-pdf-batch`, {
         method: "POST",
         body: formData,
         signal: controller.signal,
       });
-  
+
       clearTimeout(timeoutId);
-  
+
       if (!response.ok) {
         throw new Error("PDF 처리에 실패했습니다.");
       }
-  
-      // 스트리밍 응답 처리 (기존 PDF 로직과 동일)
+
+        // 스트리밍 응답 처리 (기존 PDF 로직과 동일)
       const reader = response.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
       let pdfPages: PDFPage[] = [];
       let processedPages = 0;
+      let isProcessingComplete = false;
       const startTime = Date.now();
-  
+
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-  
+
         const chunk = decoder.decode(value, { stream: true });
         buffer += chunk;
-  
+
         const lines = buffer.split(/\r?\n\r?\n/);
         buffer = lines.pop() || "";
-  
+
         for (const line of lines) {
           if (line.trim() === "") continue;
           
           if (line.includes("[DONE]")) {
+            isProcessingComplete = true;
             setIsStreaming(false);
             break;
           }
-  
+
           try {
             const jsonStr = line.replace(/^data: /, "").trim();
             if (!jsonStr) continue;
-  
+
             const data = JSON.parse(jsonStr);
-  
+
             if (data.content && data.content.includes("📄 페이지")) {
               const pageMatch = data.content.match(/페이지 (\d+)/);
               if (pageMatch) {
@@ -480,8 +506,9 @@ export function ChatArea({
                 );
               }
             }
-  
+
             if (data.is_streaming === false) {
+              isProcessingComplete = true;
               setMessages(currentMessages =>
                 currentMessages.map(msg => {
                   if (msg.id === progressMessageId && msg.pdfProgress) {
@@ -504,17 +531,26 @@ export function ChatArea({
             console.error("JSON 파싱 오류:", e, line);
           }
         }
+        
+        if (isProcessingComplete) {
+          break;
+        }
       }
-  
-      // setSelectedFile(null); // 제거됨 (파일 상태 유지)
-      // setPreviewUrl(null); // 제거 (PDF도 미리보기 상태 유지)
+
+      if (isProcessingComplete && pdfPages.length > 0) {
+        console.log("✅ PDF processing completed, adding greeting message");
+        setTimeout(() => {
+          addAutoGreetingMessage(pdfFile.name);
+        }, 1500);
+      }
+
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
       if (pdfInputRef.current) {
         pdfInputRef.current.value = "";
       }
-  
+
     } catch (err) {
       console.error("PDF 처리 오류:", err);
       setError(
@@ -557,6 +593,11 @@ export function ChatArea({
       setError(null);
   
       // PDF 파일이면 즉시 선행 add-on 실행 (파일 직접 전달)
+      console.log("🎨 Starting icon generation for:", file.name);
+      generateIcon(file.name).catch(err => {
+        console.error("Icon generation failed:", err);
+      });
+  
       if (file.type === "application/pdf") {
         setPreviewUrl(null);
         processPDFUpload(file); // PDF 전용 선행 처리 함수 호출
@@ -1280,6 +1321,8 @@ export function ChatArea({
     setMessages([]);
     setChatTitle("Current Chat");
 
+    clearIcon();
+    
     // 새 채팅 ID 생성
     const newChatId = Date.now();
     setCurrentChatId(newChatId);
@@ -1477,9 +1520,28 @@ export function ChatArea({
               message={message}
               isStreaming={isStreaming && message.id === messages.length}
               showImage={isFirstOccurrence}
+              customAvatar={message.customAvatar || (message.role === "system" && iconSrc ? iconSrc : undefined)}
             />
           );
         })}
+
+        {/* 아이콘 상태 표시 추가 (미리보기 영역 위에) */}
+        {iconLoading && (
+          <div className="p-2 bg-blue-50 dark:bg-blue-900/20 text-center shrink-0">
+            <span className="text-sm text-blue-600 dark:text-blue-400">
+              🎨 파일 기반 아이콘 생성 중...
+            </span>
+          </div>
+        )}
+
+        {iconError && (
+          <div className="p-2 bg-yellow-50 dark:bg-yellow-900/20 text-center shrink-0">
+            <span className="text-sm text-yellow-600 dark:text-yellow-400">
+              ⚠️ 아이콘 생성 실패: {iconError}
+            </span>
+          </div>
+        )}
+
         {isLoading && !isStreaming && (
           <div className="text-center py-2">
             <span className="text-sm text-gray-500 dark:text-gray-400">
