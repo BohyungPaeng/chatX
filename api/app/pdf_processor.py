@@ -14,8 +14,8 @@ from .services import convert_pdf_page_to_base64, analyze_image, generate_stream
 from .models import ImageAnalysisRequest, ChatRequest, ChatMessage
 
 # PDF 처리 관련 상수
-PDF_BATCH_SIZE = 4  # 배치당 처리할 페이지 수
-PDF_PROCESSING_TIMEOUT = 30  # 처리 타임아웃 (초)
+PDF_BATCH_SIZE = 1  # 배치당 처리할 페이지 수
+PDF_PROCESSING_TIMEOUT = 60  # 처리 타임아웃 (초)
 PDF_MAX_FILE_SIZE = 50 * 1024 * 1024  # 최대 파일 크기 (50MB)
 TOP_K_MAX = 10  # 검색 결과 최대 개수
 TOP_K_MIN = 1   # 검색 결과 최소 개수
@@ -368,6 +368,15 @@ class PDFBatchProcessor:
             Preserve the original language and structure as much as possible. Do not translate or modify the content unnecessarily.
             The resulting output should provide clear, structured information exactly as presented in the original document.
             """
+
+            if self.model_name == "gpt-4.1":
+                ocr_system_prompt = """Please extract and transcribe all visible text from this image exactly as shown. This is for accessibility purposes.
+                "Extract text and respond in this exact format:
+                ---START---
+                [extracted text here]
+                ---END---
+                Do not stop until you reach END marker"
+                """
             analysis_request = ImageAnalysisRequest(
                 image_url=image_url,
                 prompt=f"해당 페이지 ({page_num})의 텍스트를 정확하게 추출해주세요. 표, 목록, 제목 등의 구조를 유지하면서 읽기 쉽게 정리해주세요.",
@@ -375,7 +384,7 @@ class PDFBatchProcessor:
                 # model="gpt-4o",
                 # model="gpt-4.1",
                 model=self.model_name,
-                max_tokens=1000
+                max_tokens=2048
             )
             
             # 비동기 함수 동기적 호출

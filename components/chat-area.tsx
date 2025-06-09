@@ -73,8 +73,8 @@ interface FileUploadState {
   uploadedUrl: string | null;
 }
 
-// API URL 설정 - 🔧 수정: 8000번 포트로 변경
-const API_URL = "http://localhost:8000/api";
+// API URL 설정
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 // 파일을 base64로 변환하는 유틸리티 함수
 const fileToBase64 = (file: File): Promise<string> => {
@@ -305,7 +305,6 @@ export function ChatArea({
 
   // 사용 가능한 모델 목록 - 프론트엔드에 고정
   const models: Model[] = [
-    { id: "gpt-4.1", name: "GPT-4.1" },
     { id: "gpt-4o", name: "GPT-4o" },
     { id: "azure.gpt-4o-2024-11-20", name: "PWCGPT-4o" },
     { id: "o4-mini", name: "O4-mini" },
