@@ -1742,16 +1742,16 @@ export function ChatArea({
           <nav className="ml-2">
             <ul className="flex space-x-3">
               <li>
-                <a href="#" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">문서번역</a>
+                <a href="https://chatonelingo.pwc.kr" target="_blank" rel="noopener noreferrer" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">문서번역</a>
               </li>
               <li>
-                <a href="#" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">계약서 검토</a>
+                <a href="https://documentai-dev.pwc.kr" target="_blank" rel="noopener noreferrer" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">계약서 검토</a>
               </li>
               <li>
-                <a href="#" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">AI Accountant</a>
+                <a href="https://aia.samil.com/" target="_blank" rel="noopener noreferrer" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">AI Accountant</a>
               </li>
               <li>
-                <a href="#" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">Tax AI</a>
+                <a href="https://taxai.pwc.kr/" target="_blank" rel="noopener noreferrer" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">Tax AI</a>
               </li>
             </ul>
           </nav>
