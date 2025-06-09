@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File, Form
-from .models import ChatRequest, ChatResponse, ChatMessage, ImageAnalysisRequest, ImageAnalysisResponse, WebSearchRequest, WebSearchResponse
+from .models import ChatRequest, ChatResponse, ChatMessage, ImageAnalysisRequest, ImageAnalysisResponse, WebSearchRequest, WebSearchResponse, ImageGenResponse
 from .services import generate_chat_response, generate_streaming_response, analyze_image, analyze_image_streaming, perform_web_search, detect_file_type, convert_pdf_page_to_base64, chunk_pdf_document
 from fastapi.responses import StreamingResponse
 from typing import List, Optional, AsyncGenerator
@@ -169,6 +169,84 @@ def process_pdf_in_batches(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"PDF 처리 중 오류: {str(e)}")
 
+@router.post("/image-generation", response_model=ImageGenResponse)
+async def image_generation(
+    filename: str = Form(...),
+    type: str = Form("icon"),
+):
+    """
+    - filename: 업로드된 파일명 (e.g. "mypic.png")
+    - type: "icon" (현재는 아이콘만 지원)
+    """
+    # 1) title은 확장자 제거
+    title = filename.rsplit(".", 1)[0]
+
+    if type != "icon":
+        raise HTTPException(400, detail=f"unsupported type: {type}")
+
+    # 2) 원본 Base64 얻기 (1024×1024)
+    try:
+        """ PWCGPT - IMAGE GENEATION, Not encapsulated YET... """
+        from .config import LITELLM_KEY, LITELLM_URL
+        import requests
+        
+        url = LITELLM_URL + "/images/generations"
+        import tomllib
+        with open(r"C:\Codespace\chatX\docs\prompt_bank.toml", "rb") as f:
+            prompts = tomllib.load(f)
+
+        headers = {
+            "User-Agent": "curl/8.9.1",
+            "accept": "application/json",
+            "accept-encoding": "gzip, deflate, br",
+            "Authorization": "Bearer " + LITELLM_KEY,
+            "Content-Type": "application/json", 
+            "Connection": "keep-alive",  
+            "x-request-type": "sync",
+        }
+
+        theme = __import__("random").choice(prompts["imagegen"]["themes"])
+        body = {
+            # "prompt": """세련된 AI 어시스턴트 캐릭터 아이콘 — translucent glass-morph rounded micro-chip head, neon-blue & cyan circuitry glowing like flowing data; a tiny speech-balloon hovering above the head that contains stacked-document pictograms symbolising knowledge comprehension, summarisation and refinement. Friendly mini-robot totem body; subtle **golden tai-chi swirl** and wafer-pattern detail hinting at the **Taiwan semiconductor industry**. Clean white or transparent background, square 1:1 aspect-ratio, high-detail vector-style, smooth gradients, minimalistic ultra-clean UI icon, flat-yet-layered depth, cinematic rim-light.""",
+            "prompt" : prompts["imagegen"]["tmp_assistant"].format(theme =theme, title=title),
+            # "model": "azure.dall-e-3",
+            # "model": "vertex_ai.imagen-3.0-generate-001",
+            "model": "vertex_ai.imagen-3.0-fast-generate-001",
+            "n": 1,
+            "quality": "standard",
+            "response_format": "url",
+            # "size": "1024x1024",
+            # "size": "1408x768",
+            # "style": "vivid",
+            "aspect_ratio": "16:9",
+            # "negative_prompt": "realistic human faces, gore, hate symbols",
+
+        }
+        response = requests.post(
+            url, 
+            # params=params, 
+            headers=headers, 
+            json=body, 
+            verify=False,
+            allow_redirects=True
+        )
+
+        raw_b64 = response.json()['data'][0]['b64_json']
+    except Exception as e:
+        raise HTTPException(500, detail=f"icon generation failed: {e}")
+
+    import base64, io
+    from PIL import Image
+    # 3) 디코딩 → PIL → 256×256 리사이즈
+    img = Image.open(io.BytesIO(base64.b64decode(raw_b64)))
+    img256 = img.resize((256, 256), Image.LANCZOS)
+
+    # 4) 메모리 상에 PNG 최적화 저장 → Base64 재인코딩
+    buf = io.BytesIO()
+    img256.save(buf, format="PNG", optimize=True)
+    resized_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    return ImageGenResponse(b64=resized_b64)
 
 # 🎯 간단한 통합 PDF Streaming + Cache 함수
 async def pdf_streaming_with_cache(

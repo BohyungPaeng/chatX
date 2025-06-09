@@ -1,0 +1,39 @@
+
+["imagegen"]
+ex_lion = """Close-up image of a majestic lion, showcasing its powerful face with intense golden eyes, a thick mane that flows like waves of sunlit grass, and a strong jawline. 
+The texture of its fur is detailed, with shades of tawny and hints of darker brown, capturing the essence of its wild beauty. The background is softly blurred to emphasize the lion's fierce expression and regal presence.
+"""
+# You can also create your own custom style to generate unique images, from doodles to digital art styles and in different genres like sci-fi, steampunk, or medieval fantasy. You name it—your imagination is the limit!
+# Here are some keyword recommendations to help you create brilliant custom styles.
+
+ex_style = """
+Medium: the material used. Examples include oil painting, pencil sketch, or vintage photography.
+Art Style: the artistic style desired. Examples include impressionism, realism, and surrealism. You can also use the name of a specific famous artist that represents the style you're looking for, such as Rembrandt, Picasso, and Monet.
+Resolution: how sharp and detailed an image is. Examples include highly detailed, ultrarealistic, and soft focus.
+Color: specific shades used to create images that feature a certain color or tone. Examples include light blue, deep red, and mint green.
+Lighting: lighting effects described through keywords like cinematic lighting, dark, moody, etc.
+Additional details: additional descriptors (modifiers) used to enhance an image.
+"""
+
+tmp_assistant = """세련된 AI 어시스턴트 캐릭터 아이콘 — translucent glass-morph rounded micro-chip head, neon-blue & cyan circuitry glowing like flowing data;
+a tiny speech-balloon hovering above the head containing stacked-document pictograms symbolising knowledge comprehension, summarisation and refinement.
+Friendly mini-robot totem body; subtle **{theme}** hinting at the **{title}**;
+Clean white or transparent background, square 1:1 aspect-ratio,
+high-detail vector-style, smooth gradients, minimalistic ultra-clean UI icon, flat-yet-layered depth, cinematic rim-light.
+no realistic human faces, no photorealistic skin texture, no gore, no hate symbols, no offensive gestures, no nudity, no explicit violence.
+"""
+
+themes = [
+  "golden tai-chi swirl and wafer-pattern detail",
+  "green leaf circuit motif",
+  "silver gear & blueprint-line motif",
+  "holographic DNA helix motif",
+  "azure globe grid motif",
+  "violet neural-network mesh motif",
+  "copper satellite-dish waveform motif",
+  "teal wave-crest motif",
+  "amber book-spine motif",
+  "crimson shield lattice motif"
+]
+
+["system prompt"]
