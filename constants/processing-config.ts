@@ -10,7 +10,7 @@ export const PROCESSING_CONFIG = {
     // 계산된 값들
     get API_TIMEOUTS() {
       return {
-        DEFAULT: 30000,
+        DEFAULT: 60000,
         PDF_PROCESSING: (this.TIMEOUT_BUFFER + this.PDF_PROCESSING_TIMEOUT) * 1000
       };
     }

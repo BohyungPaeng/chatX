@@ -22,6 +22,12 @@ Clean white or transparent background, square 1:1 aspect-ratio,
 high-detail vector-style, smooth gradients, minimalistic ultra-clean UI icon, flat-yet-layered depth, cinematic rim-light.
 no realistic human faces, no photorealistic skin texture, no gore, no hate symbols, no offensive gestures, no nudity, no explicit violence.
 """
+tmp_assitant_e2 =  """세련된 AI 어시스턴트 캐릭터 아이콘 — translucent glass-morph rounded micro-chip head, neon-blue & cyan circuitry glowing like flowing data;
+a tiny speech-balloon hovering above the head containing stacked-document pictograms symbolising knowledge comprehension, summarisation and refinement.
+Friendly mini-robot totem body; subtle **{theme}** hinting at the **{title}**;
+Clean white or transparent background,
+no realistic human faces,
+"""
 
 themes = [
   "golden tai-chi swirl and wafer-pattern detail",
