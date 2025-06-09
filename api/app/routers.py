@@ -197,45 +197,65 @@ async def image_generation(
         toml_path = os.path.join(current_dir, "..", "..", "docs", "prompt_bank.toml")
         with open(toml_path, "rb") as f:
             prompts = tomllib.load(f)
-        tmp_assistant = prompts["imagegen"]["tmp_assistant"]
+        template_imagegen = prompts["imagegen"]["tmp_assistant"]
         theme_list =  prompts["imagegen"]["themes"]
+        prompt_imagegen = template_imagegen.format(theme =__import__("random").choice(theme_list), title=title)
 
-        headers = {
-            "User-Agent": "curl/8.9.1",
-            "accept": "application/json",
-            "accept-encoding": "gzip, deflate, br",
-            "Authorization": "Bearer " + LITELLM_KEY,
-            "Content-Type": "application/json", 
-            "Connection": "keep-alive",  
-            "x-request-type": "sync",
-        }
+        PWC_FLAG= False
+        if PWC_FLAG:
+            headers = {
+                "User-Agent": "curl/8.9.1",
+                "accept": "application/json",
+                "accept-encoding": "gzip, deflate, br",
+                "Authorization": "Bearer " + LITELLM_KEY,
+                "Content-Type": "application/json", 
+                "Connection": "keep-alive",  
+                "x-request-type": "sync",
+            }
 
-        body = {
-            # "prompt": """세련된 AI 어시스턴트 캐릭터 아이콘 — translucent glass-morph rounded micro-chip head, neon-blue & cyan circuitry glowing like flowing data; a tiny speech-balloon hovering above the head that contains stacked-document pictograms symbolising knowledge comprehension, summarisation and refinement. Friendly mini-robot totem body; subtle **golden tai-chi swirl** and wafer-pattern detail hinting at the **Taiwan semiconductor industry**. Clean white or transparent background, square 1:1 aspect-ratio, high-detail vector-style, smooth gradients, minimalistic ultra-clean UI icon, flat-yet-layered depth, cinematic rim-light.""",
-            "prompt" : tmp_assistant.format(theme =__import__("random").choice(theme_list), title=title),
-            # "model": "azure.dall-e-3",
-            # "model": "vertex_ai.imagen-3.0-generate-001",
-            "model": "vertex_ai.imagen-3.0-fast-generate-001",
-            "n": 1,
-            "quality": "standard",
-            "response_format": "url",
-            # "size": "1024x1024",
-            # "size": "1408x768",
-            # "style": "vivid",
-            "aspect_ratio": "16:9",
-            # "negative_prompt": "realistic human faces, gore, hate symbols",
+            body = {
+                # "prompt": """세련된 AI 어시스턴트 캐릭터 아이콘 — translucent glass-morph rounded micro-chip head, neon-blue & cyan circuitry glowing like flowing data; a tiny speech-balloon hovering above the head that contains stacked-document pictograms symbolising knowledge comprehension, summarisation and refinement. Friendly mini-robot totem body; subtle **golden tai-chi swirl** and wafer-pattern detail hinting at the **Taiwan semiconductor industry**. Clean white or transparent background, square 1:1 aspect-ratio, high-detail vector-style, smooth gradients, minimalistic ultra-clean UI icon, flat-yet-layered depth, cinematic rim-light.""",
+                "prompt" : prompt_imagegen,
+                # "model": "azure.dall-e-3",
+                # "model": "vertex_ai.imagen-3.0-generate-001",
+                "model": "vertex_ai.imagen-3.0-fast-generate-001",
+                "n": 1,
+                "quality": "standard",
+                "response_format": "url",
+                # "size": "1024x1024",
+                # "size": "1408x768",
+                # "style": "vivid",
+                "aspect_ratio": "16:9",
+                # "negative_prompt": "realistic human faces, gore, hate symbols",
 
-        }
-        response = requests.post(
-            url, 
-            # params=params, 
-            headers=headers, 
-            json=body, 
-            verify=False,
-            allow_redirects=True
-        )
+            }
+            response = requests.post(
+                url, 
+                # params=params, 
+                headers=headers, 
+                json=body, 
+                verify=False,
+                allow_redirects=True
+            )
 
-        raw_b64 = response.json()['data'][0]['b64_json']
+            raw_b64 = response.json()['data'][0]['b64_json']
+        else:
+            # OpenAI DALL-E 사용 (services.py의 client 활용)
+            from .services import client
+            dalle_response = client.images.generate(
+                model="dall-e-3",
+                prompt=prompt_imagegen,
+                size="1024x1024",
+                quality="standard",
+                n=1
+            )
+            
+            # 이미지 URL에서 다운로드 후 base64 변환
+            image_url = dalle_response.data[0].url
+            img_response = requests.get(image_url)
+            img_response.raise_for_status()
+            
+            raw_b64 = base64.b64encode(img_response.content).decode("utf-8")
     except Exception as e:
         print(f"🔥 Icon generation error: {e}")  # 서버 로그용
         raise HTTPException(400, detail=f"Icon generation failed: {str(e)}")
