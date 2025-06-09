@@ -200,7 +200,9 @@ async def image_generation(
         template_imagegen = prompts["imagegen"]["tmp_assistant"]
         theme_list =  prompts["imagegen"]["themes"]
         prompt_imagegen = template_imagegen.format(theme =__import__("random").choice(theme_list), title=title)
-
+        
+        import base64, io
+        from PIL import Image
         PWC_FLAG= False
         if PWC_FLAG:
             headers = {
@@ -260,8 +262,6 @@ async def image_generation(
         print(f"🔥 Icon generation error: {e}")  # 서버 로그용
         raise HTTPException(400, detail=f"Icon generation failed: {str(e)}")
 
-    import base64, io
-    from PIL import Image
     # 3) 디코딩 → PIL → 256×256 리사이즈
     img = Image.open(io.BytesIO(base64.b64decode(raw_b64)))
     img256 = img.resize((256, 256), Image.LANCZOS)
