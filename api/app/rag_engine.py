@@ -226,11 +226,16 @@ class CitationFormatter:
     @staticmethod
     def create_fallback_prompt(filename: str, query: str) -> str:
         """검색 결과가 없을 때 전체 문서용 프롬프트"""
+        from .routers import get_combined_text_from_cache
+        full_text = get_combined_text_from_cache(filename)
         return f"""당신은 PDF 문서 분석 전문가입니다.
 문서명: {filename}
 질문: {query}
 
 검색된 관련 구간이 없어 전체 문서를 참조합니다.
+
+전체 문서 내용:
+{full_text}
 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
     
     @staticmethod

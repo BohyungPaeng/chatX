@@ -7,6 +7,7 @@ import rehypeHighlight from "rehype-highlight";
 import React, { useState, useRef, useCallback, ReactNode } from "react";
 import { PDFProgressCard } from "@/components/pdf-progress-card";
 import { PDFResultsViewer } from "@/components/pdf-results-viewer";
+import { PDFGreetingMessage } from "@/components/pdf-greeting-message";
 
 export interface Citation {
   url: string;
@@ -40,19 +41,25 @@ export interface Message {
   citations?: Citation[];
   pdfProgress?: PDFProgress;
   pdfPages?: PDFPage[];
-  messageType?: "normal" | "pdf-progress" | "pdf-results";
+  messageType?: "normal" | "pdf-progress" | "pdf-results" | "pdf-greeting";
+  isAutoMessage?: boolean;
+  customAvatar?: string;
+  fileName?: string;
+  onMasterSettingSubmit?: (prompt: string) => void;
 }
 
 interface ChatMessageProps {
   message: Message;
   isStreaming?: boolean;
   showImage?: boolean;
+  customAvatar?: string;
 }
 
 export function ChatMessage({
   message,
   isStreaming = false,
   showImage = false,
+  customAvatar,
 }: ChatMessageProps) {
   const isUser = message.role === "user";
   const [copiedMap, setCopiedMap] = useState<Record<string, boolean>>({});
@@ -187,9 +194,29 @@ export function ChatMessage({
   }, []);
 
   // 스타일 객체 정의
+  const getAvatarContent = () => {
+    const avatarSrc = message.customAvatar || customAvatar;
+    
+    if (avatarSrc) {
+      return (
+        <img 
+          src={avatarSrc} 
+          alt="Custom Avatar" 
+          className="h-8 w-8 rounded-lg object-cover"
+        />
+      );
+    }
+    
+    return isUser ? (
+      <User className="h-6 w-6 text-white" />
+    ) : (
+      <Bot className="h-6 w-6 text-white" />
+    );
+  };
+
   const messageStyles = {
     container: `flex gap-4 ${isUser ? "flex-row-reverse" : ""}`,
-    avatar: `flex items-center justify-center flex-shrink-0 ${isUser ? "bg-orange-500" : "bg-gray-700"}`,
+    avatar: `flex items-center justify-center flex-shrink-0 h-10 w-10 rounded-lg ${isUser ? "bg-orange-500" : "bg-gray-700"} ${message.customAvatar || customAvatar ? "p-0" : ""}`,
     messageContent: `flex-1 flex items-start ${isUser ? "justify-end" : "justify-start"} flex-col ${isUser ? "items-end" : "items-start"}`,
     userMessage: "text-gray-700 dark:text-foreground whitespace-pre-line text-right",
     imageContainer: `mb-2 ${isUser ? "ml-auto" : "mr-auto"} max-w-xs`,
@@ -209,11 +236,7 @@ export function ChatMessage({
   return (
     <div className={messageStyles.container}>
       <Avatar className={messageStyles.avatar}>
-        {isUser ? (
-          <User className="h-5 w-5 text-white" />
-        ) : (
-          <Bot className="h-5 w-5 text-white" />
-        )}
+        {getAvatarContent()}
       </Avatar>
       
       <div className={messageStyles.messageContent}>
@@ -258,6 +281,16 @@ export function ChatMessage({
               </div>
             )}
 
+            {/* PDF 인사 메시지 */}
+            {message.messageType === "pdf-greeting" && message.fileName && (
+              <div className={messageStyles.systemContainer}>
+                <PDFGreetingMessage 
+                  fileName={message.fileName}
+                  iconSrc={message.customAvatar || customAvatar}
+                  onMasterSettingSubmit={message.onMasterSettingSubmit}
+                />
+              </div>
+            )}
             {/* 일반 텍스트 메시지 */}
             {(!message.messageType || message.messageType === "normal") && message.content && (
               <div className={messageStyles.proseContainer}>
@@ -305,12 +338,13 @@ export function ChatMessage({
                         <span className={messageStyles.citationIndex}>
                           [{index + 1}]
                         </span>
-                        <div className="flex-1">                          
+                        <div className="flex-1">
+                          <a
                             href={citation.url}
                             target="_blank"
                             rel="noreferrer"
                             className={messageStyles.citationLink}
-                          <a>
+                          >
                             {citation.title || citation.url}
                           </a>
                           <div className={messageStyles.citationUrl}>
