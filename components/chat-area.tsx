@@ -432,12 +432,12 @@ export function ChatArea({
 
         // API 요청 (process-pdf-batch)
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => {
-        controller.abort();
-        setError("PDF 처리 시간이 초과되었습니다.");
-        setIsLoading(false);
-        setIsStreaming(false);
-      }, timeoutDuration);
+      // const timeoutId = setTimeout(() => {
+      //   controller.abort();
+      //   setError("PDF 처리 시간이 초과되었습니다.");
+      //   setIsLoading(false);
+      //   setIsStreaming(false);
+      // }, timeoutDuration);
 
       const response = await fetch(`${API_URL}/process-pdf-batch`, {
         method: "POST",
@@ -445,7 +445,7 @@ export function ChatArea({
         signal: controller.signal,
       });
 
-      clearTimeout(timeoutId);
+      // clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error("PDF 처리에 실패했습니다.");
@@ -570,17 +570,13 @@ export function ChatArea({
       }
 
     } catch (err) {
-      clearTimeout(timeoutId);  
-      // AbortError 특별 처리
-      if (err.name === 'AbortError') {
-        console.log("PDF 처리가 타임아웃으로 중단되었습니다.");
-        setError("PDF 처리 시간이 초과되었습니다. 지금까지 처리된 결과를 확인하세요.");
-        setIsLoading(false);
-        setIsStreaming(false);
-        return; // 여기서 리턴하면 에러가 React로 안 올라감
-      }
-      
       console.error("PDF 처리 오류:", err);
+
+      // AbortError는 사용자가 의도적으로 중단한 경우만 처리
+      if (err instanceof Error && err.name === "AbortError") {
+        // timeout에 의한 abort는 에러 표시 안함
+        return;
+      }
       setError(
         err instanceof Error
           ? err.message

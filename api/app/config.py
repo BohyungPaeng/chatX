@@ -2,7 +2,7 @@ import os
 from dotenv import load_dotenv
 
 # .env 파일 로드
-load_dotenv()
+load_dotenv(override=True)
 
 # OpenAI API 설정
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
@@ -17,3 +17,8 @@ PORT = int(os.getenv("PORT", "8000"))
 
 # GPT 모델 설정
 GPT_MODEL = os.getenv("GPT_MODEL", "gpt-4-1106-preview")
+
+# 🔧 타임아웃 관련 환경변수 추가
+PDF_PROCESSING_TIMEOUT = int(os.getenv("PDF_PROCESSING_TIMEOUT", "30"))
+PDF_BATCH_SIZE = int(os.getenv("PDF_BATCH_SIZE", "1"))
+PDF_MAX_FILE_SIZE = int(os.getenv("PDF_MAX_FILE_SIZE_MB", "50")) * 1024 * 1024 # 기본 50MB

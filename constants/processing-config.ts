@@ -5,7 +5,7 @@ export const PROCESSING_CONFIG = {
     PDF_MAX_FILE_SIZE: 50 * 1024 * 1024,
     
     // 프론트엔드 전용
-    TIMEOUT_BUFFER: 30, // 30초 버퍼
+    TIMEOUT_BUFFER: 60, // 30초 버퍼
     
     // 계산된 값들
     get API_TIMEOUTS() {

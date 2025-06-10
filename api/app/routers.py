@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File, Form
 from .models import ChatRequest, ChatResponse, ChatMessage, ImageAnalysisRequest, ImageAnalysisResponse, WebSearchRequest, WebSearchResponse, ImageGenResponse
-from .services import generate_chat_response, generate_streaming_response, analyze_image, analyze_image_streaming, perform_web_search, detect_file_type, convert_pdf_page_to_base64, chunk_pdf_document
+from .services import generate_chat_response, generate_streaming_response, analyze_image, analyze_image_streaming, perform_web_search, detect_file_type, convert_pdf_page_to_base64, chunk_pdf_document, generate_image
 from fastapi.responses import StreamingResponse
 from typing import List, Optional, AsyncGenerator
 import base64
@@ -12,7 +12,8 @@ import json
 
 router = APIRouter()
 
-from .pdf_processor import PDFBatchProcessor, PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT, PDF_MAX_FILE_SIZE
+from .pdf_processor import PDFBatchProcessor
+from .config import PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT, PDF_MAX_FILE_SIZE
 from .cache_manager import pdf_cache_manager  # 직접 import
 class GlobalCacheAdapter:
     def __contains__(self, filename):
@@ -186,6 +187,7 @@ async def image_generation(
 
     # 2) 원본 Base64 얻기 (1024×1024)
     try:
+        # raw_b64 = generate_image(title)
         """ PWCGPT - IMAGE GENEATION, Not encapsulated YET... """
         from .config import LITELLM_KEY, LITELLM_URL
         import requests
@@ -200,7 +202,7 @@ async def image_generation(
         selected_theme = __import__("random").choice(prompts["imagegen"]["themes"]) #FIXME: 또는 키워드기반 함수생성
         import base64, io
         from PIL import Image
-        PWC_FLAG= False
+        PWC_FLAG= True
         if PWC_FLAG:
             headers = {
                 "User-Agent": "curl/8.9.1",
@@ -242,9 +244,11 @@ async def image_generation(
             # OpenAI DALL-E 사용 (services.py의 client 활용)
             from .services import client
             dalle_response = client.images.generate(
-                model="dall-e-2",  
-                prompt=prompts["imagegen"]["tmp_assitant_e2"].format(theme =selected_theme, title=title),
-                size="256x256",  # 🔥 1024x1024 → 256x256 (직접 원하는 사이즈)
+                # model="dall-e-2", 
+                # prompt=prompts["imagegen"]["tmp_assitant_e2"].format(theme =selected_theme, title=title),
+                # size="256x256",  # 🔥 1024x1024 → 256x256 (직접 원하는 사이즈)
+                model="dall-e-3",
+                prompt=prompts["imagegen"]["tmp_assistant"].format(theme =selected_theme, title=title),
                 n=1,
                 response_format="b64_json"
             )
