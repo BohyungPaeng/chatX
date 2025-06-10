@@ -313,7 +313,6 @@ export function ChatArea({
   
   // 사용 가능한 모델 목록 - 프론트엔드에 고정
   const models: Model[] = [
-    { id: "gpt-4.1", name: "GPT-4.1" },
     { id: "gpt-4o", name: "GPT-4o" },
     { id: "azure.gpt-4o-2024-11-20", name: "PWCGPT-4o" },
     { id: "o4-mini", name: "O4-mini" },
@@ -433,12 +432,12 @@ export function ChatArea({
 
         // API 요청 (process-pdf-batch)
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => {
-        controller.abort();
-        setError("PDF 처리 시간이 초과되었습니다.");
-        setIsLoading(false);
-        setIsStreaming(false);
-      }, timeoutDuration);
+      // const timeoutId = setTimeout(() => {
+      //   controller.abort();
+      //   setError("PDF 처리 시간이 초과되었습니다.");
+      //   setIsLoading(false);
+      //   setIsStreaming(false);
+      // }, timeoutDuration);
 
       const response = await fetch(`${API_URL}/process-pdf-batch`, {
         method: "POST",
@@ -446,7 +445,7 @@ export function ChatArea({
         signal: controller.signal,
       });
 
-      clearTimeout(timeoutId);
+      // clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error("PDF 처리에 실패했습니다.");
@@ -572,6 +571,12 @@ export function ChatArea({
 
     } catch (err) {
       console.error("PDF 처리 오류:", err);
+
+      // AbortError는 사용자가 의도적으로 중단한 경우만 처리
+      if (err instanceof Error && err.name === "AbortError") {
+        // timeout에 의한 abort는 에러 표시 안함
+        return;
+      }
       setError(
         err instanceof Error
           ? err.message

@@ -12,11 +12,12 @@ from typing import List, Dict, Any, Tuple
 import threading
 from .services import convert_pdf_page_to_base64, analyze_image, generate_streaming_response
 from .models import ImageAnalysisRequest, ChatRequest, ChatMessage
+from .config import PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT
 
 # PDF 처리 관련 상수
-PDF_BATCH_SIZE = 1  # 배치당 처리할 페이지 수
-PDF_PROCESSING_TIMEOUT = 60  # 처리 타임아웃 (초)
-PDF_MAX_FILE_SIZE = 50 * 1024 * 1024  # 최대 파일 크기 (50MB)
+# PDF_BATCH_SIZE = 1  # 배치당 처리할 페이지 수
+# PDF_PROCESSING_TIMEOUT = 60  # 처리 타임아웃 (초)
+# PDF_MAX_FILE_SIZE = 50 * 1024 * 1024  # 최대 파일 크기 (50MB)
 TOP_K_MAX = 10  # 검색 결과 최대 개수
 TOP_K_MIN = 1   # 검색 결과 최소 개수
 AVAILABLE_MODELS = [
@@ -28,7 +29,12 @@ AVAILABLE_MODELS = [
     "bedrock.anthropic.claude-3-5-haiku", #0.8/4$
     "azure.gpt-4.1-mini-2025-04-14", #0.4/1.6$
     "azure.gpt-4.1-nano-2025-04-14", #0.1/0.4$
+    "azure.o3-mini", #1.21/4.84$
+    "openai.o4-mini-2025-04-16", #1.1/4.4$
+    "openai.o3-2025-04-16", #10/40$
 ]
+
+
 
 def validate_pdf_readable(pdf_content: bytes) -> Dict[str, Any]:
     """
@@ -562,6 +568,7 @@ class PDFBatchProcessor:
         for batch_start in range(1, self.total_pages + 1, PDF_BATCH_SIZE):
             # 타임아웃 체크
             elapsed_time = time.time() - self.start_time
+            print("#########", elapsed_time)
             if elapsed_time > PDF_PROCESSING_TIMEOUT:
                 # 🔥 간소화: 타임아웃 메시지만
                 yield f"⏰ 처리 시간 초과 ({elapsed_time:.1f}초)"

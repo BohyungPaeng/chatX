@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File, Form
 from .models import ChatRequest, ChatResponse, ChatMessage, ImageAnalysisRequest, ImageAnalysisResponse, WebSearchRequest, WebSearchResponse, ImageGenResponse
-from .services import generate_chat_response, generate_streaming_response, analyze_image, analyze_image_streaming, perform_web_search, detect_file_type, convert_pdf_page_to_base64, chunk_pdf_document
+from .services import generate_chat_response, generate_streaming_response, analyze_image, analyze_image_streaming, perform_web_search, detect_file_type, convert_pdf_page_to_base64, chunk_pdf_document, generate_image
 from fastapi.responses import StreamingResponse
 from typing import List, Optional, AsyncGenerator
 import base64
@@ -12,7 +12,8 @@ import json
 
 router = APIRouter()
 
-from .pdf_processor import PDFBatchProcessor, PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT, PDF_MAX_FILE_SIZE
+from .pdf_processor import PDFBatchProcessor
+from .config import PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT, PDF_MAX_FILE_SIZE
 from .cache_manager import pdf_cache_manager  # 직접 import
 class GlobalCacheAdapter:
     def __contains__(self, filename):
@@ -186,6 +187,7 @@ async def image_generation(
 
     # 2) 원본 Base64 얻기 (1024×1024)
     try:
+        # raw_b64 = generate_image(title)
         """ PWCGPT - IMAGE GENEATION, Not encapsulated YET... """
         from .config import LITELLM_KEY, LITELLM_URL
         import requests
@@ -197,51 +199,79 @@ async def image_generation(
         toml_path = os.path.join(current_dir, "..", "..", "docs", "prompt_bank.toml")
         with open(toml_path, "rb") as f:
             prompts = tomllib.load(f)
-        tmp_assistant = prompts["imagegen"]["tmp_assistant"]
-        theme_list =  prompts["imagegen"]["themes"]
+        selected_theme = __import__("random").choice(prompts["imagegen"]["themes"]) #FIXME: 또는 키워드기반 함수생성
+        import base64, io
+        from PIL import Image
+        PWC_FLAG= True
+        if PWC_FLAG:
+            headers = {
+                "User-Agent": "curl/8.9.1",
+                "accept": "application/json",
+                "accept-encoding": "gzip, deflate, br",
+                "Authorization": "Bearer " + LITELLM_KEY,
+                "Content-Type": "application/json", 
+                "Connection": "keep-alive",  
+                "x-request-type": "sync",
+            }
 
-        headers = {
-            "User-Agent": "curl/8.9.1",
-            "accept": "application/json",
-            "accept-encoding": "gzip, deflate, br",
-            "Authorization": "Bearer " + LITELLM_KEY,
-            "Content-Type": "application/json", 
-            "Connection": "keep-alive",  
-            "x-request-type": "sync",
-        }
+            body = {
+                # "prompt": """세련된 AI 어시스턴트 캐릭터 아이콘 — translucent glass-morph rounded micro-chip head, neon-blue & cyan circuitry glowing like flowing data; a tiny speech-balloon hovering above the head that contains stacked-document pictograms symbolising knowledge comprehension, summarisation and refinement. Friendly mini-robot totem body; subtle **golden tai-chi swirl** and wafer-pattern detail hinting at the **Taiwan semiconductor industry**. Clean white or transparent background, square 1:1 aspect-ratio, high-detail vector-style, smooth gradients, minimalistic ultra-clean UI icon, flat-yet-layered depth, cinematic rim-light.""",
+                "prompt" : prompts["imagegen"]["tmp_assistant"].format(theme =selected_theme, title=title),
+                # "model": "azure.dall-e-3",
+                # "model": "vertex_ai.imagen-3.0-generate-001",
+                "model": "vertex_ai.imagen-3.0-fast-generate-001",
+                "n": 1,
+                "quality": "standard",
+                "response_format": "url",
+                # "size": "1024x1024",
+                # "size": "1408x768",
+                # "style": "vivid",
+                "aspect_ratio": "16:9",
+                # "negative_prompt": "realistic human faces, gore, hate symbols",
 
-        body = {
-            # "prompt": """세련된 AI 어시스턴트 캐릭터 아이콘 — translucent glass-morph rounded micro-chip head, neon-blue & cyan circuitry glowing like flowing data; a tiny speech-balloon hovering above the head that contains stacked-document pictograms symbolising knowledge comprehension, summarisation and refinement. Friendly mini-robot totem body; subtle **golden tai-chi swirl** and wafer-pattern detail hinting at the **Taiwan semiconductor industry**. Clean white or transparent background, square 1:1 aspect-ratio, high-detail vector-style, smooth gradients, minimalistic ultra-clean UI icon, flat-yet-layered depth, cinematic rim-light.""",
-            "prompt" : tmp_assistant.format(theme =__import__("random").choice(theme_list), title=title),
-            # "model": "azure.dall-e-3",
-            # "model": "vertex_ai.imagen-3.0-generate-001",
-            "model": "vertex_ai.imagen-3.0-fast-generate-001",
-            "n": 1,
-            "quality": "standard",
-            "response_format": "url",
-            # "size": "1024x1024",
-            # "size": "1408x768",
-            # "style": "vivid",
-            "aspect_ratio": "16:9",
-            # "negative_prompt": "realistic human faces, gore, hate symbols",
+            }
+            response = requests.post(
+                url, 
+                # params=params, 
+                headers=headers, 
+                json=body, 
+                verify=False,
+                allow_redirects=True
+            )
 
-        }
-        response = requests.post(
-            url, 
-            # params=params, 
-            headers=headers, 
-            json=body, 
-            verify=False,
-            allow_redirects=True
-        )
-
-        raw_b64 = response.json()['data'][0]['b64_json']
+            raw_b64 = response.json()['data'][0]['b64_json']
+        else:
+            # OpenAI DALL-E 사용 (services.py의 client 활용)
+            from .services import client
+            dalle_response = client.images.generate(
+                # model="dall-e-2", 
+                # prompt=prompts["imagegen"]["tmp_assitant_e2"].format(theme =selected_theme, title=title),
+                # size="256x256",  # 🔥 1024x1024 → 256x256 (직접 원하는 사이즈)
+                model="dall-e-3",
+                prompt=prompts["imagegen"]["tmp_assistant"].format(theme =selected_theme, title=title),
+                n=1,
+                response_format="b64_json"
+            )
+            raw_b64 = dalle_response.data[0].b64_json
+                    
+            # dalle_response = client.images.generate(
+            #     model="dall-e-3",
+            #     prompt=prompt_imagegen,
+            #     size="1024x1024",
+            #     quality="standard",
+            #     n=1
+            # )
+            
+            # 이미지 URL에서 다운로드 후 base64 변환
+            # image_url = dalle_response.data[0].url
+            # img_response = requests.get(image_url)
+            # img_response.raise_for_status()
+            
+            # raw_b64 = base64.b64encode(img_response.content).decode("utf-8")
     except Exception as e:
         print(f"🔥 Icon generation error: {e}")  # 서버 로그용
         raise HTTPException(400, detail=f"Icon generation failed: {str(e)}")
 
-    import base64, io
-    from PIL import Image
     # 3) 디코딩 → PIL → 256×256 리사이즈
     img = Image.open(io.BytesIO(base64.b64decode(raw_b64)))
     img256 = img.resize((256, 256), Image.LANCZOS)
