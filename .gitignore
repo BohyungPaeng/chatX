@@ -35,3 +35,5 @@ __pycache__/
 *.pkl.gz
 
 /api/models/
+api/pdf_cache/*.pdf_faiss.index
+api/pdf_cache/*.pdf_faiss_meta.json

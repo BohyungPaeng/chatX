@@ -44,7 +44,7 @@ class FaissIndex:
                 print(f"🤖 Loading embedding model: {model_input}")
                 try:
                     model = SentenceTransformer(model_input, local_files_only=True, token=False)
-                    print("✅ Cache loaded successfully")
+                    print("✅ Cached Model loaded successfully")
                     return model
                 except:
                     print("🌐 Huggingface On-line Download 시도...")
@@ -198,59 +198,75 @@ class FaissIndex:
             return []
     
     def save_to_cache(self, filename: str) -> bool:
-        """캐시에 인덱스 저장"""
+        """FAISS 인덱스와 메타데이터를 캐시에 저장"""
         try:
-            if self.index is None:
+            if self.index is None or not self.chunks:
                 return False
             
-            cache_data = {
-                'chunks': self.chunks,
+            import json
+            import time
+            
+            # 청크 데이터 저장 (pickle)
+            chunks_data = {'chunks': self.chunks}
+            pdf_cache_manager.save(f"{filename}_faiss_chunks", chunks_data)
+            
+            # 메타데이터 저장 (JSON - 읽기 쉽게)
+            meta_info = {
                 'embedding_dim': self.embedding_dim,
                 'model_name': getattr(self.embedding_model, 'model_name', 'unknown'),
-                'index_size': self.index.ntotal if self.index else 0
+                'index_size': self.index.ntotal,
+                'chunk_count': len(self.chunks),
+                'created_at': time.time(),
+                'version': '1.0'
             }
             
-            # 메타데이터 저장
-            pdf_cache_manager.save(f"{filename}_faiss_meta", cache_data)
+            meta_path = pdf_cache_manager.cache_dir / f"{filename}_faiss_meta.json"
+            with open(meta_path, 'w', encoding='utf-8') as f:
+                json.dump(meta_info, f, indent=2, ensure_ascii=False)
             
-            # FAISS 인덱스 파일로 저장
+            # FAISS 인덱스 저장
             index_path = pdf_cache_manager.cache_dir / f"{filename}_faiss.index"
             faiss.write_index(self.index, str(index_path))
             
-            print(f"💾 FAISS index cached: {filename}")
+            print(f"💾 FAISS 캐시 저장: {filename} ({len(self.chunks)}개 청크)")
             return True
             
         except Exception as e:
-            print(f"❌ Error saving to cache: {e}")
+            print(f"❌ FAISS 저장 실패: {filename} - {e}")
             return False
-    
+
     def load_from_cache(self, filename: str) -> bool:
-        """캐시에서 인덱스 로드"""
+        """캐시에서 FAISS 인덱스와 메타데이터 로드"""
         try:
-            # 메타데이터 로드
-            meta_data = pdf_cache_manager.load(f"{filename}_faiss_meta")
-            if not meta_data:
+            import json
+            
+            # JSON 메타데이터 로드
+            meta_path = pdf_cache_manager.cache_dir / f"{filename}_faiss_meta.json"
+            if not meta_path.exists():
                 return False
             
-            # 🔧 chunks 키 확인 추가
-            if 'chunks' not in meta_data:
-                print("⚠️ 캐시에 chunks 정보 없음")
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                meta_info = json.load(f)
+            
+            # 청크 데이터 로드
+            chunks_data = pdf_cache_manager.load(f"{filename}_faiss_chunks")
+            if not chunks_data or 'chunks' not in chunks_data:
                 return False
             
-            # FAISS 인덱스 파일 로드
+            # FAISS 인덱스 로드
             index_path = pdf_cache_manager.cache_dir / f"{filename}_faiss.index"
             if not index_path.exists():
                 return False
             
             self.index = faiss.read_index(str(index_path))
-            self.chunks = meta_data['chunks']
-            self.embedding_dim = meta_data['embedding_dim']
+            self.chunks = chunks_data['chunks']
+            self.embedding_dim = meta_info['embedding_dim']
             
-            print(f"📂 FAISS index loaded from cache: {filename}")
+            print(f"📂 FAISS 캐시 로드: {filename} ({len(self.chunks)}개 청크)")
             return True
             
         except Exception as e:
-            print(f"❌ Error loading from cache: {e}")
+            print(f"❌ FAISS 로드 실패: {filename} - {e}")
             return False
     
     def get_stats(self) -> dict:
