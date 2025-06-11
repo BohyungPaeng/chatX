@@ -173,10 +173,8 @@ async def generate_chat_response(request: ChatRequest) -> ChatResponse:
         )
     
 async def generate_image(title : str):
-    PWC_FLAG= False
     """ PWCGPT - IMAGE GENEATION, Not encapsulated YET... """
-    from .config import LITELLM_KEY, LITELLM_URL
-    import requests
+    from .config import LITELLM_KEY, LITELLM_URL, IMAGE_GEN_MODEL
 
     url = LITELLM_URL + "/images/generations"
     import tomllib
@@ -186,9 +184,8 @@ async def generate_image(title : str):
     with open(toml_path, "rb") as f:
         prompts = tomllib.load(f)
     selected_theme = __import__("random").choice(prompts["imagegen"]["themes"]) #FIXME: 또는 키워드기반 함수생성
-    import base64, io
-    from PIL import Image
-    if PWC_FLAG:
+    if IMAGE_GEN_MODEL.startswith("azure.") or IMAGE_GEN_MODEL.startswith("vertex_ai.") :
+        import requests
         headers = {
             "User-Agent": "curl/8.9.1",
             "accept": "application/json",
@@ -200,11 +197,8 @@ async def generate_image(title : str):
         }
 
         body = {
-            # "prompt": """세련된 AI 어시스턴트 캐릭터 아이콘 — translucent glass-morph rounded micro-chip head, neon-blue & cyan circuitry glowing like flowing data; a tiny speech-balloon hovering above the head that contains stacked-document pictograms symbolising knowledge comprehension, summarisation and refinement. Friendly mini-robot totem body; subtle **golden tai-chi swirl** and wafer-pattern detail hinting at the **Taiwan semiconductor industry**. Clean white or transparent background, square 1:1 aspect-ratio, high-detail vector-style, smooth gradients, minimalistic ultra-clean UI icon, flat-yet-layered depth, cinematic rim-light.""",
             "prompt" : prompts["imagegen"]["tmp_assistant"].format(theme =selected_theme, title=title),
-            # "model": "azure.dall-e-3",
-            # "model": "vertex_ai.imagen-3.0-generate-001",
-            "model": "vertex_ai.imagen-3.0-fast-generate-001",
+            "model": IMAGE_GEN_MODEL,
             "n": 1,
             "quality": "standard",
             "response_format": "url",
@@ -213,11 +207,9 @@ async def generate_image(title : str):
             # "style": "vivid",
             "aspect_ratio": "16:9",
             # "negative_prompt": "realistic human faces, gore, hate symbols",
-
         }
         response = requests.post(
-            url, 
-            # params=params, 
+            url,
             headers=headers, 
             json=body, 
             verify=False,
@@ -228,24 +220,24 @@ async def generate_image(title : str):
     else:
         # OpenAI DALL-E 사용 (services.py의 client 활용)
         from .services import client
-        dalle_response = client.images.generate(
-            # model="dall-e-2", 
-            # prompt=prompts["imagegen"]["tmp_assitant_e2"].format(theme =selected_theme, title=title),
-            # size="256x256",  # 🔥 1024x1024 → 256x256 (직접 원하는 사이즈)
-            model="dall-e-3",
-            prompt=prompts["imagegen"]["tmp_assistant"].format(theme =selected_theme, title=title),
-            n=1,
-            response_format="b64_json"
-        )
+        if IMAGE_GEN_MODEL == "dall-e-2":
+            dalle_response = client.images.generate(
+                model="dall-e-2", 
+                prompt=prompts["imagegen"]["tmp_assitant_e2"].format(theme =selected_theme, title=title),
+                size="256x256",  # 🔥 1024x1024 → 256x256 (직접 원하는 사이즈)
+                n=1,
+                response_format="b64_json"
+            )
+        elif IMAGE_GEN_MODEL == "dall-e-3":
+            dalle_response = client.images.generate(
+                model="dall-e-3",
+                prompt=prompts["imagegen"]["tmp_assistant"].format(theme =selected_theme, title=title),
+                quality="standard",
+                n=1,
+                # size="1024x1024",
+                response_format="b64_json"
+            )
         raw_b64 = dalle_response.data[0].b64_json
-                
-        # dalle_response = client.images.generate(
-        #     model="dall-e-3",
-        #     prompt=prompt_imagegen,
-        #     size="1024x1024",
-        #     quality="standard",
-        #     n=1
-        # )
         
         # 이미지 URL에서 다운로드 후 base64 변환
         # image_url = dalle_response.data[0].url
