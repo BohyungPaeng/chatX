@@ -12,6 +12,7 @@ from typing import List, Union, Any, Tuple
 from dataclasses import dataclass
 from .doc_chunker import Chunk
 from .cache_manager import pdf_cache_manager
+from .config import FLAG_LIGHTWEIGHT
 
 @dataclass
 class SearchResult:
@@ -34,25 +35,39 @@ class FaissIndex:
         self.chunks = []
         self.embedding_dim = None
         
-    def _load_embedding_model(self, model_input: Union[str, Any]) -> Any:
-        """임베딩 모델 로드"""
-        if isinstance(model_input, str):
-            # HuggingFace 모델명인 경우
+    def _load_embedding_model(self, model_input: str) -> Any:
+
+        if not FLAG_LIGHTWEIGHT:
+            # 1순위: 캐시, 2순위: 실패시 온라인 시도
             try:
                 from sentence_transformers import SentenceTransformer
                 print(f"🤖 Loading embedding model: {model_input}")
-                model = SentenceTransformer(model_input)
-                print(f"✅ Model loaded successfully")
-                return model
+                try:
+                    model = SentenceTransformer(model_input, local_files_only=True, token=False)
+                    print("✅ Cache loaded successfully")
+                    return model
+                except:
+                    print("🌐 Huggingface On-line Download 시도...")
+                    model = SentenceTransformer(model_input, token=False)
+                    print("✅ On-line Model loaded successfully")
+                    return model
             except Exception as e:
-                print(f"❌ Failed to load model {model_input}: {e}")
-                # Fallback to smaller model
-                print("🔄 Falling back to smaller model: all-MiniLM-L6-v2")
-                return SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+                print(f"⚠️ {model_input} 로드 실패 {e}")
+        
         else:
-            # 이미 로드된 모델 객체인 경우
-            print(f"✅ Using provided embedding model: {type(model_input)}")
-            return model_input
+            # 3순위: 경량 임베더 (stage 브랜치 전용)
+            try:
+                from .tools.lightweight_embedder import LightweightEmbedder
+                embedder = LightweightEmbedder()
+                if embedder.load():
+                    print("✅ 경량 임베더 사용")
+                    return embedder  # SentenceTransformer와 호환되는 인터페이스
+                else:
+                    raise FileNotFoundError("Local model not found")
+            except ImportError:
+                pass  # dev 브랜치에서는 파일이 없으므로 무시
+        
+        return None #TODO: TF-IDF만 사용해야함
     
     def _get_embedding_with_instruction(self, text: str, is_query: bool = False) -> np.ndarray:
         """E5 모델의 instruction prefix 적용"""
@@ -215,6 +230,11 @@ class FaissIndex:
             # 메타데이터 로드
             meta_data = pdf_cache_manager.load(f"{filename}_faiss_meta")
             if not meta_data:
+                return False
+            
+            # 🔧 chunks 키 확인 추가
+            if 'chunks' not in meta_data:
+                print("⚠️ 캐시에 chunks 정보 없음")
                 return False
             
             # FAISS 인덱스 파일 로드
