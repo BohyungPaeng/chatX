@@ -33,3 +33,5 @@ __pycache__/
 # *.cpython-312.pyc
 .windsurf/rules/chatx.md
 *.pkl.gz
+
+/api/models/
