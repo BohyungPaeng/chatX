@@ -24,11 +24,14 @@ numpy==2.2.6
 # ===== Platform Specific =====
 pywin32>=306; sys_platform == "win32"  # Windows support (optional)
 
-# ===== RAG Vector indexing =====
-torch==2.4.1+cpu --index-url https://download.pytorch.org/whl/cpu
-sentence-transformers==2.5.1  
+# ===== RAG Vector Indexing =====
+# --extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2.0
+transformers>=4.21.0
+# sentence-transformers  # 주석 처리
+faiss-cpu>=1.7.4
 
 # Note: All Jupyter/IPython related packages have been removed
 # Note: Transitive dependencies (pydantic, starlette, etc.) will be auto-installed
 # Note: This lists are for render deployment[Lite]. pip install --no-cache-dir -r requirements[lite].txt
-
+# Note: --index-url https://download.pytorch.org/whl/cpu 는 PyPI를 대체하는개념이라 extra써야함
