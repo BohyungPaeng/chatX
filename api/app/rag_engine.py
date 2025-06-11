@@ -294,3 +294,183 @@ def search_and_generate_system_message(search_index: SearchIndex, query: str, fi
 def search_and_format(search_index: SearchIndex, query: str, filename: str, top_k: int = 5) -> Tuple[str, List[SearchResult]]:
     """기존 함수 (호환성 유지)"""
     return search_and_generate_system_message(search_index, query, filename, use_page_context=False, top_k=top_k)
+
+# api/app/rag_engine.py에 추가할 함수들
+
+# 기존 imports에 추가
+from .faiss_index import FaissIndex, create_faiss_index_from_cache, SearchResult as FaissSearchResult
+
+# 요약 키워드 감지
+SUMMARY_KEYWORDS = [
+    '요약', '전체', '개요', '주요 내용', '핵심', '전반적', '종합',
+    'summary', 'summarize', 'overview', 'main points', 'key points', 'overall'
+]
+
+def detect_summary_request(query: str) -> bool:
+    """요약 요청 감지"""
+    query_lower = query.lower()
+    return any(keyword in query_lower for keyword in SUMMARY_KEYWORDS)
+
+def get_combined_text_from_cache_safe(filename: str) -> str:
+    """안전한 전체 문서 텍스트 가져오기"""
+    try:
+        from .routers import get_combined_text_from_cache
+        return get_combined_text_from_cache(filename)
+    except Exception as e:
+        print(f"Error getting combined text: {e}")
+        return ""
+
+def search_with_faiss_engine(filename: str, query: str, top_k: int = 5) -> Tuple[str, List[FaissSearchResult]]:
+    """
+    FAISS 기반 검색 및 시스템 메시지 생성
+    
+    Args:
+        filename: PDF 파일명
+        query: 사용자 쿼리
+        top_k: 반환할 검색 결과 수
+        
+    Returns:
+        Tuple[str, List[FaissSearchResult]]: (시스템 메시지, 검색 결과)
+    """
+    try:
+        # 1. 요약 요청 감지 → 전체 문서 모드
+        if detect_summary_request(query):
+            print(f"🎯 Summary request detected: {query[:50]}...")
+            full_text = get_combined_text_from_cache_safe(filename)
+            
+            system_message = f"""당신은 PDF 문서 분석 전문가입니다.
+다음 PDF 문서({filename})의 전체 내용을 바탕으로 사용자의 요청에 정확하고 자세하게 답변해주세요.
+
+📄 전체 문서 내용:
+{full_text}
+
+답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요.
+메타데이터나 바닥글이 아닌 실제 문서의 핵심 내용을 중심으로 답변해주세요."""
+
+            return system_message, []
+        
+        # 2. FAISS 검색 실행
+        print(f"🔍 FAISS search for: {query[:50]}...")
+        faiss_index = create_faiss_index_from_cache(filename)
+        
+        if not faiss_index:
+            print("❌ FAISS index creation failed, falling back to full document")
+            full_text = get_combined_text_from_cache_safe(filename)
+            
+            system_message = f"""당신은 PDF 문서 분석 전문가입니다.
+FAISS 검색을 사용할 수 없어 전체 문서를 참조합니다.
+
+문서명: {filename}
+질문: {query}
+
+전체 문서 내용:
+{full_text}
+
+답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
+            
+            return system_message, []
+        
+        # 3. 검색 결과 처리
+        search_results = faiss_index.search(query, top_k)
+        
+        if not search_results:
+            print("⚠️ No search results found, using full document")
+            full_text = get_combined_text_from_cache_safe(filename)
+            
+            system_message = f"""당신은 PDF 문서 분석 전문가입니다.
+검색 결과가 없어 전체 문서를 참조합니다.
+
+문서명: {filename}
+질문: {query}
+
+전체 문서 내용:
+{full_text}
+
+답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
+            
+            return system_message, []
+        
+        # 4. 검색 결과 기반 시스템 메시지 생성
+        formatted_results = []
+        for result in search_results:
+            content_preview = result.chunk.content[:300] + "..." if len(result.chunk.content) > 300 else result.chunk.content
+            formatted_results.append(f"{result.citation}: {content_preview} (유사도: {result.score:.3f})")
+        
+        results_text = "\n\n".join(formatted_results)
+        
+        system_message = f"""당신은 PDF 문서 분석 전문가입니다.
+다음 PDF 문서({filename})에서 관련성이 높은 구간을 FAISS 임베딩 검색으로 찾았습니다.
+
+질문: {query}
+
+🎯 관련 구간 (유사도 기반 정렬):
+{results_text}
+
+답변 규칙:
+1. **반드시 [1] (Page X) 형식으로 출처를 명시하세요**
+2. **관련 구간에서 핵심 정보를 인용하여 답변하세요**  
+3. **유사도 점수가 높은 순서대로 우선 참조하세요**
+4. **문서에서 찾을 수 없는 내용은 "문서에서 해당 정보를 찾을 수 없습니다"라고 명시하세요**"""
+
+        print(f"✅ FAISS search completed: {len(search_results)} results")
+        return system_message, search_results
+        
+    except Exception as e:
+        print(f"❌ Error in FAISS search: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Fallback to full document
+        full_text = get_combined_text_from_cache_safe(filename)
+        system_message = f"""당신은 PDF 문서 분석 전문가입니다.
+검색 중 오류가 발생하여 전체 문서를 참조합니다.
+
+문서명: {filename}
+질문: {query}
+오류: {str(e)}
+
+전체 문서 내용:
+{full_text}
+
+답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
+        
+        return system_message, []
+
+def search_with_hybrid_engine(filename: str, query: str, top_k: int = 5, 
+                             use_faiss: bool = True, use_tfidf: bool = False) -> Tuple[str, List]:
+    """
+    하이브리드 검색 엔진 (FAISS + TF-IDF 선택 가능)
+    
+    Args:
+        filename: PDF 파일명
+        query: 사용자 쿼리 
+        top_k: 반환할 검색 결과 수
+        use_faiss: FAISS 검색 사용 여부
+        use_tfidf: TF-IDF 검색 사용 여부 (기존 방식)
+        
+    Returns:
+        Tuple[str, List]: (시스템 메시지, 검색 결과)
+    """
+    if use_faiss:
+        return search_with_faiss_engine(filename, query, top_k)
+    elif use_tfidf:
+        # 기존 TF-IDF 방식 사용
+        from .doc_chunker import DocumentChunker
+        chunks = DocumentChunker('cosine').chunk_document(filename)
+        search_index = SearchIndex(chunks)
+        return search_and_generate_system_message(search_index, query, filename, use_page_context=True, top_k=top_k)
+    else:
+        # 전체 문서 모드
+        full_text = get_combined_text_from_cache_safe(filename)
+        system_message = f"""당신은 PDF 문서 분석 전문가입니다.
+검색 없이 전체 문서를 참조합니다.
+
+문서명: {filename}
+질문: {query}
+
+전체 문서 내용:
+{full_text}
+
+답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
+        
+        return system_message, []
