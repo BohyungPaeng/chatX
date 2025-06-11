@@ -1,0 +1,34 @@
+# ChatX API Requirements
+# Production dependencies only - No development tools included
+# Last updated: 2025-01-07
+
+# ===== Core Web Framework =====
+fastapi>=0.104.1,<0.115.0          # Main web framework
+uvicorn[standard]>=0.24.0,<0.31.0  # ASGI server with extras for production
+python-multipart>=0.0.6,<0.1.0     # Required for file upload handling
+python-dotenv>=1.0.0,<2.0.0        # Environment variable management
+requests
+
+# ===== AI/ML Integration =====
+openai>=1.82.0,<2.0.0              # OpenAI API client
+aiohttp>=3.12.2,<4.0.0             # Async HTTP client for PWC GPT
+
+# ===== Document Processing =====
+PyMuPDF>=1.23.8,<1.25.0            # PDF text extraction and processing
+Pillow>=10.1.0,<11.0.0             # Image processing and format conversion
+
+# ===== Project Specific =====
+pocketflow>=0.0.2,<0.1.0           # Custom flow engine for complex workflows
+numpy==2.2.6
+
+# ===== Platform Specific =====
+pywin32>=306; sys_platform == "win32"  # Windows support (optional)
+
+# ===== RAG Vector indexing =====
+torch==2.4.1+cpu --index-url https://download.pytorch.org/whl/cpu
+sentence-transformers==2.5.1  
+
+# Note: All Jupyter/IPython related packages have been removed
+# Note: Transitive dependencies (pydantic, starlette, etc.) will be auto-installed
+# Note: This lists are for render deployment[Lite]. pip install --no-cache-dir -r requirements[lite].txt
+
