@@ -24,3 +24,12 @@ FLAG_LIGHTWEIGHT = not IMAGE_GEN_MODEL.startswith("vertex_ai.")
 PDF_PROCESSING_TIMEOUT = int(os.getenv("PDF_PROCESSING_TIMEOUT", "30"))
 PDF_BATCH_SIZE = int(os.getenv("PDF_BATCH_SIZE", "1"))
 PDF_MAX_FILE_SIZE = int(os.getenv("PDF_MAX_FILE_SIZE_MB", "50")) * 1024 * 1024 # 기본 50MB
+
+try:
+    import tomllib
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    toml_path = os.path.join(current_dir, "..", "..", "docs", "prompt_bank.toml")
+    with open(toml_path, "rb") as f:
+        PROMPT_BANK = tomllib.load(f)
+except:
+    PROMPT_BANK = {}

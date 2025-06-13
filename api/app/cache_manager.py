@@ -2,6 +2,7 @@ import pickle
 import gzip
 import os
 import time
+import re
 from pathlib import Path
 from typing import Dict, Optional, List
 
@@ -175,3 +176,32 @@ class PDFCacheManager:
 
 # 전역 캐시 매니저 인스턴스
 pdf_cache_manager = PDFCacheManager()
+
+def build_page_content_map(filename: str) -> dict[int, str]:
+    """
+    SearchIndex 외부에서 사용할 수 있는 페이지 컨텐츠 맵 생성
+    SearchIndex.build_page_map 기능을 독립적으로 분리
+    """
+    page_content_map = {}
+    
+    try:
+        cache_data = pdf_cache_manager.load(filename)
+        if not cache_data or 'page_texts' not in cache_data:
+            return page_content_map
+            
+        page_texts = cache_data['page_texts']
+        
+        for page_text in page_texts:
+            # 기존 _extract_page_content 로직 재사용
+            match = re.match(r'## 📄 페이지 (\d+)\n\n(.*)', page_text, re.DOTALL)
+            if match:
+                page_num = int(match.group(1))
+                content = match.group(2).strip()
+                page_content_map[page_num] = content
+        
+        print(f"📄 페이지 맵 구축 완료: {len(page_content_map)}개 페이지")
+        
+    except Exception as e:
+        print(f"❌ 페이지 맵 구축 실패: {e}")
+    
+    return page_content_map
