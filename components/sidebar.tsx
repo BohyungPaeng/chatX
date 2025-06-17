@@ -9,11 +9,20 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
+  X,
+  Edit3,
+  MoreHorizontal,
 } from "lucide-react";
 import { useMobile } from "@/hooks/use-mobile";
 import { useTheme } from "next-themes";
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // 채팅 히스토리 타입 정의
 interface ChatHistory {
@@ -40,6 +49,11 @@ export function Sidebar({
 
   // 채팅 히스토리 상태 추가
   const [chatHistory, setChatHistory] = useState<ChatHistory[]>([]);
+
+  // 채팅 편집 상태 관리
+  const [editingChatId, setEditingChatId] = useState<number | null>(null);
+  const [editingTitle, setEditingTitle] = useState<string>("");
+  const editInputRef = useRef<HTMLInputElement>(null);
 
   // useEffect only runs on the client, so now we can safely show the UI
   useEffect(() => {
@@ -72,6 +86,55 @@ export function Sidebar({
     // 채팅 전환 이벤트 발송
     const event = new CustomEvent("switchChat", {
       detail: { chat },
+    });
+    window.dispatchEvent(event);
+  };
+
+  // 채팅 제목 편집 시작
+  const startEditingTitle = (chat: ChatHistory) => {
+    setEditingChatId(chat.id);
+    setEditingTitle(chat.title);
+    setTimeout(() => {
+      editInputRef.current?.focus();
+      editInputRef.current?.select();
+    }, 10);
+  };
+
+  // 채팅 제목 편집 완료
+  const finishEditingTitle = () => {
+    if (editingChatId && editingTitle.trim()) {
+      // 제목 업데이트 이벤트 발송
+      const event = new CustomEvent("updateChatTitle", {
+        detail: { chatId: editingChatId, newTitle: editingTitle.trim() },
+      });
+      window.dispatchEvent(event);
+    }
+    setEditingChatId(null);
+    setEditingTitle("");
+  };
+
+  // 채팅 제목 편집 취소
+  const cancelEditingTitle = () => {
+    setEditingChatId(null);
+    setEditingTitle("");
+  };
+
+  // 채팅 제목 편집 키보드 이벤트
+  const handleTitleEditKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      finishEditingTitle();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelEditingTitle();
+    }
+  };
+
+  // 채팅 삭제 핸들러
+  const handleDeleteChat = (chatId: number, chatTitle: string) => {
+    // 채팅 삭제 이벤트 발송 (confirm 제거)
+    const event = new CustomEvent("deleteChat", {
+      detail: { chatId, chatTitle },
     });
     window.dispatchEvent(event);
   };
@@ -217,26 +280,97 @@ export function Sidebar({
               </h2>
               {chatHistory.length > 0 ? (
                 chatHistory.map((chat) => (
-                  <Button
+                  <div
                     key={chat.id}
-                    variant="ghost"
-                    className={`w-full justify-start gap-2 ${
+                    className={`group relative flex items-center w-full ${
                       isDark
-                        ? "text-white hover:bg-zinc-800"
-                        : "text-gray-700 hover:bg-gray-200"
+                        ? "hover:bg-zinc-800"
+                        : "hover:bg-gray-200"
+                    } rounded-md overflow-hidden`}
+                  >
+                    {editingChatId === chat.id ? (
+                      // 편집 모드
+                      <div className="flex-1 px-2 py-1 min-w-0">
+                        <input
+                          ref={editInputRef}
+                          type="text"
+                          value={editingTitle}
+                          onChange={(e) => setEditingTitle(e.target.value)}
+                          onKeyDown={handleTitleEditKeyDown}
+                          onBlur={finishEditingTitle}
+                          className={`w-full text-sm bg-transparent border border-gray-300 dark:border-gray-600 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-orange-500 ${
+                            isDark ? "text-white" : "text-gray-700"
+                          }`}
+                          maxLength={50}
+                        />
+                      </div>
+                    ) : (
+                      // 일반 모드
+                      <>
+                        <Button
+                          variant="ghost"
+                          className={`flex-1 justify-start gap-2 h-auto py-2 px-2 pr-8 min-w-0 ${
+                            isDark
+                              ? "text-white hover:bg-transparent"
+                              : "text-gray-700 hover:bg-transparent"
                     }`}
                     onClick={() => handleChatClick(chat)}
                   >
-                    <MessageSquare size={16} />
-                    <div className="flex flex-col items-start overflow-hidden">
-                      <span className="text-sm font-medium truncate w-full text-left">
+                          <MessageSquare size={16} className="shrink-0" />
+                          <div className="flex flex-col items-start min-w-0 flex-1 overflow-hidden">
+                            <span className="text-sm font-medium w-full text-left leading-tight truncate block">
                         {chat.title}
                       </span>
-                      <span className="text-xs text-gray-500 dark:text-gray-400 truncate w-full text-left">
+                            <span className="text-xs text-gray-500 dark:text-gray-400 w-full text-left leading-tight truncate block">
                         {chat.lastMessage}
                       </span>
                     </div>
                   </Button>
+
+                        {/* 편집/삭제 드롭다운 - 호버 시에만 표시되도록 개선 */}
+                        <div className="absolute top-1/2 right-2 transform -translate-y-1/2 shrink-0">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className={`h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-all duration-200 rounded-full ${
+                                  isDark
+                                    ? "text-gray-400 hover:text-white hover:bg-zinc-700"
+                                    : "text-gray-400 hover:text-gray-700 hover:bg-gray-300"
+                                }`}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <MoreHorizontal size={12} />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-32">
+                              <DropdownMenuItem
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  startEditingTitle(chat);
+                                }}
+                                className="cursor-pointer"
+                              >
+                                <Edit3 size={14} className="mr-2" />
+                                편집
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteChat(chat.id, chat.title);
+                                }}
+                                className="cursor-pointer text-red-600 focus:text-red-600"
+                              >
+                                <X size={14} className="mr-2" />
+                                삭제
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 ))
               ) : (
                 <div
@@ -316,11 +450,14 @@ export function Sidebar({
             <div className="space-y-3 flex flex-col items-center">
               {chatHistory.length > 0 ? (
                 chatHistory.map((chat) => (
-                  <Button
+                  <div
                     key={chat.id}
+                    className="relative group"
+                  >
+                    <Button
                     variant="ghost"
                     size="icon"
-                    className={`h-9 w-9 relative group ${
+                      className={`h-9 w-9 ${
                       isDark
                         ? "text-white hover:bg-zinc-800"
                         : "text-gray-700 hover:bg-gray-200"
@@ -329,10 +466,20 @@ export function Sidebar({
                   >
                     <MessageSquare size={16} />
                     <span className="sr-only">{chat.title}</span>
-                    <div className="absolute left-full ml-2 px-2 py-1 bg-black text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                    </Button>
+                    
+                    {/* 호버 툴팁 - 더 나은 스타일링 */}
+                    <div className="absolute left-full ml-2 px-3 py-2 bg-gray-900 dark:bg-gray-700 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200 z-50 pointer-events-none w-64 max-w-xs">
+                      <div className="font-medium text-white mb-1 truncate">
                       {chat.title}
+                      </div>
+                      <div className="text-xs text-gray-300 truncate">
+                        {chat.lastMessage}
+                      </div>
+                      {/* 툴팁 화살표 */}
+                      <div className="absolute top-1/2 left-0 transform -translate-y-1/2 -translate-x-1 w-2 h-2 bg-gray-900 dark:bg-gray-700 rotate-45"></div>
                     </div>
-                  </Button>
+                  </div>
                 ))
               ) : (
                 <div className="text-xs text-center text-gray-500 dark:text-gray-400 p-2">

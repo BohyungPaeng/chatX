@@ -7,6 +7,7 @@ fastapi>=0.104.1,<0.115.0          # Main web framework
 uvicorn[standard]>=0.24.0,<0.31.0  # ASGI server with extras for production
 python-multipart>=0.0.6,<0.1.0     # Required for file upload handling
 python-dotenv>=1.0.0,<2.0.0        # Environment variable management
+httpx
 requests
 
 # ===== AI/ML Integration =====

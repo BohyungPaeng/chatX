@@ -1,10 +1,13 @@
+"use client";
+
 import { Avatar } from "@/components/ui/avatar";
 import { User, Bot, Copy, Check, Link } from "lucide-react";
+import React, { useState, useRef, useCallback, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeHighlight from "rehype-highlight";
-import React, { useState, useRef, useCallback, ReactNode } from "react";
+import "highlight.js/styles/github.css";
 import { PDFProgressCard } from "@/components/pdf-progress-card";
 import { PDFResultsViewer } from "@/components/pdf-results-viewer";
 import { PDFGreetingMessage } from "@/components/pdf-greeting-message";
@@ -14,6 +17,12 @@ export interface Citation {
   title: string;
   start_index: number;
   end_index: number;
+  // 파일 검색용 (main-internal)
+  file_id?: string;
+  filename?: string;
+  type?: string;
+  quote?: string;
+  score?: number;
 }
 
 export interface PDFPage {
@@ -48,11 +57,12 @@ export interface Message {
   onMasterSettingSubmit?: (prompt: string) => void;
 }
 
-interface ChatMessageProps {
+interface MessageProps {
   message: Message;
   isStreaming?: boolean;
   showImage?: boolean;
   customAvatar?: string;
+  className?: string;
 }
 
 export function ChatMessage({
@@ -60,84 +70,11 @@ export function ChatMessage({
   isStreaming = false,
   showImage = false,
   customAvatar,
-}: ChatMessageProps) {
+}: MessageProps) {
   const isUser = message.role === "user";
   const [copiedMap, setCopiedMap] = useState<Record<string, boolean>>({});
   const [showCitations, setShowCitations] = useState<boolean>(true);
-
-  const copyToClipboard = useCallback((text: string, id: string) => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopiedMap((prev) => ({ ...prev, [id]: true }));
-      setTimeout(() => {
-        setCopiedMap((prev) => ({ ...prev, [id]: false }));
-      }, 2000);
-    });
-  }, []);
-
-  // 코드 내용을 추출하는 함수
-  const extractCodeText = useCallback((node: any): string => {
-    if (!node) return "";
-
-    // 문자열인 경우 바로 반환
-    if (typeof node === "string") return node;
-
-    // props와 children이 있는 객체인 경우 재귀적으로 처리
-    if (typeof node === "object") {
-      // props.children이 있는 경우
-      if ("props" in node && node.props && node.props.children) {
-        const children = node.props.children;
-
-        // children이 배열인 경우
-        if (Array.isArray(children)) {
-          return children.map(extractCodeText).join("");
-        }
-
-        // children이 객체나 문자열인 경우
-        return extractCodeText(children);
-      }
-    }
-
-    return "";
-  }, []);
-
-  const PreBlock = useCallback(
-    ({ children, ...props }: any) => {
-      const preRef = useRef<HTMLPreElement>(null);
-      const codeId = `code-${Math.random().toString(36).substr(2, 9)}`;
-      const codeText = extractCodeText(children);
-      const isCopied = copiedMap[codeId] || false;
-
-      return (
-        <div className="code-block-wrapper">
-          <button
-            className={`code-copy-button ${isCopied ? "copied" : ""}`}
-            onClick={() => copyToClipboard(codeText, codeId)}
-            aria-label="코드 복사"
-            title="코드 복사"
-          >
-            <span className="flex items-center gap-1">
-              {isCopied ? (
-                <>
-                  <Check size={14} />
-                  <span className="text-xs">복사됨</span>
-                </>
-              ) : (
-                <>
-                  <Copy size={14} />
-                  <span className="text-xs">복사</span>
-                </>
-              )}
-            </span>
-          </button>
-          <pre ref={preRef} {...props}>
-            {children}
-          </pre>
-        </div>
-      );
-    },
-    [copiedMap, copyToClipboard, extractCodeText]
-  );
-
+  // const [showCitations, setShowCitations] = useState(false);
   const TableComponent = useCallback(({ children, ...props }: any) => {
     return (
       <div className="overflow-x-auto my-4">
@@ -189,6 +126,80 @@ export function ChatMessage({
     );
   }, []);
 
+  const copyToClipboard = useCallback((text: string, id: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedMap((prev) => ({ ...prev, [id]: true }));
+      setTimeout(() => {
+        setCopiedMap((prev) => ({ ...prev, [id]: false }));
+      }, 2000);
+    });
+  }, []);
+
+  // 코드 내용을 추출하는 함수
+  const extractCodeText = useCallback((node: any): string => {
+    if (!node) return "";
+
+    // 문자열인 경우 바로 반환
+    if (typeof node === "string") return node;
+
+    // props와 children이 있는 객체인 경우 재귀적으로 처리
+    if (typeof node === "object") {
+      // props.children이 있는 경우
+      if ("props" in node && node.props && node.props.children) {
+        const children = node.props.children;
+
+        // children이 배열인 경우
+        if (Array.isArray(children)) {
+          return children.map(extractCodeText).join("");
+        }
+
+        // children이 객체나 문자열인 경우
+        return extractCodeText(children);
+      }
+    }
+
+    return "";
+  }, []);
+
+  const PreBlock = useCallback(
+    ({ children, node, ...props }: any) => {
+      const preRef = useRef<HTMLPreElement>(null);
+      const codeId = `code-${Math.random().toString(36).substr(2, 9)}`;
+      const codeText = extractCodeText(children);
+      const isCopied = copiedMap[codeId] || false;
+
+      return (
+        <div className="code-block-wrapper">
+          <button
+            className={`code-copy-button ${isCopied ? "copied" : ""}`}
+            onClick={() => copyToClipboard(codeText, codeId)}
+            aria-label="코드 복사"
+            title="코드 복사"
+          >
+            <span className="flex items-center gap-1">
+              {isCopied ? (
+                <>
+                  <Check size={16} />
+                  <span className="text-xs">복사됨</span>
+                </>
+              ) : (
+                <>
+                  <Copy size={16} />
+                  <span className="text-xs">복사</span>
+                </>
+              )}
+            </span>
+          </button>
+          <pre ref={preRef} {...props}>
+            {children}
+          </pre>
+        </div>
+      );
+    },
+    [copiedMap, copyToClipboard, extractCodeText]
+  );
+
+
   const toggleCitations = useCallback(() => {
     setShowCitations((prev) => !prev);
   }, []);
@@ -211,6 +222,33 @@ export function ChatMessage({
       <User className="h-6 w-6 text-white" />
     ) : (
       <Bot className="h-6 w-6 text-white" />
+    );
+  };
+  
+  // 인용 정보를 포함한 렌더링 함수
+  const renderWithCitations = (content: string, citations: Citation[]) => {
+    // Citation이 있는 경우도 마크다운으로 렌더링하되, 
+    // 별도의 citation 정보는 하단에 표시
+    return (
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw, rehypeHighlight]}
+        components={{
+          pre: PreBlock,
+          table: TableComponent,
+          thead: TableHead,
+          tr: TableRow,
+          td: TableCell,
+          th: TableHeader,
+          strong: ({ node, children, ...props }) => (
+            <strong className="font-bold" {...props}>
+              {children}
+            </strong>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
     );
   };
 
@@ -251,7 +289,7 @@ export function ChatMessage({
                 />
               </div>
             )}
-            {message.content}
+            {renderWithCitations(message.content, message.citations || [])}
           </div>
         ) : (
           <div className={messageStyles.systemContainer}>
@@ -339,17 +377,52 @@ export function ChatMessage({
                           [{index + 1}]
                         </span>
                         <div className="flex-1">
-                          <a
-                            href={citation.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className={messageStyles.citationLink}
-                          >
-                            {citation.title || citation.url}
-                          </a>
-                          <div className={messageStyles.citationUrl}>
-                            {citation.url}
-                          </div>
+                          {citation.url ? (      
+                          //old 유지           
+                            <a
+                              href={citation.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={messageStyles.citationLink}
+                            >
+                              {citation.title || citation.url}
+                            </a>
+                          ) : citation.file_id ? (
+                            // main-internal 새 기능
+                            <div className="flex items-center justify-between">
+                              <span className="text-blue-500 dark:text-blue-400">
+                                {citation.filename || "업로드된 파일"}
+                              </span>
+                              {citation.score && (
+                                <span className="text-xs text-gray-400 ml-2">
+                                  검색 점수: {(citation.score * 100).toFixed(1)}%
+                                </span>
+                              )}
+                            </div>
+                          ) : null}
+
+                          {citation.url && (
+                            <div className={messageStyles.citationUrl}>
+                              {citation.url}
+                            </div>
+                          )}
+                          
+                          {citation.file_id && (
+                            <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                              파일 ID: {citation.file_id.substring(0, 15)}...
+                            </div>
+                          )}    
+
+                          {citation.quote && (
+                            <div className="text-xs text-gray-600 dark:text-gray-300 mt-2 p-3 bg-gray-100 dark:bg-gray-700 rounded">
+                              <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2 flex items-center gap-1">
+                                📄 원본 소스 텍스트:
+                              </div>
+                              <div className="italic text-gray-600 dark:text-gray-400 border-l-2 border-blue-300 dark:border-blue-600 pl-3 max-h-32 overflow-y-auto text-sm leading-relaxed">
+                                "{citation.quote.length > 600 ? citation.quote.substring(0, 600) + "..." : citation.quote}"
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}

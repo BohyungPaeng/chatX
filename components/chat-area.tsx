@@ -13,15 +13,13 @@ import {
   X,
   PlusCircle,
   Search,
-  Globe,
-  FileText,
+  Globe
 } from "lucide-react";
 import { ChatMessage, Message, Citation, PDFPage, PDFProgress } from "@/components/chat-message";
 import { useMobile } from "@/hooks/use-mobile";
 import { useApiTimeout } from "@/hooks/use-timeout";
 import { useImageGeneration } from "@/hooks/use-image-generation";
 import { PDFGreetingMessage } from "@/components/pdf-greeting-message";
-
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
   DropdownMenu,
@@ -31,18 +29,22 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
 import { usePDFProcessor } from "@/hooks/use-pdf-processor";
+import { FileUpload } from "@/components/file-upload";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { getModels, type Model } from "@/constants/models";
 
 interface ChatAreaProps {
   onMenuClick: () => void;
   sidebarOpen: boolean;
   sidebarCollapsed?: boolean;
 }
-
-// 모델 타입 정의
-type Model = {
-  id: string;
-  name: string;
-};
 
 // Message 타입 정의
 interface Message {
@@ -67,6 +69,7 @@ interface ChatHistory {
   title: string;
   lastMessage: string;
   timestamp: Date;
+  messages: Message[]; // 🆕 이 줄 추가 필요
 }
 
 // 🔧 개선: 파일 상태 인터페이스 추가
@@ -74,10 +77,67 @@ interface FileUploadState {
   isUploading: boolean;
   error: string | null;
   uploadedUrl: string | null;
+  messages: Message[]; // 실제 메시지 내용도 저장
+}
+
+// 저장된 채팅 세션 타입 정의
+interface SavedChatSession {
+  id: number;
+  title: string;
+  lastMessage: string;
+  timestamp: string; // JSON에서는 Date가 string으로 저장됨
+  messages: Message[];
+  isFileMode?: boolean;
+  vectorStoreId?: string;
 }
 
 // API URL 설정
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+
+// localStorage 키 상수
+const CHAT_SESSIONS_KEY = "chatx_chat_sessions";
+const CURRENT_CHAT_ID_KEY = "chatx_current_chat_id";
+
+// 채팅 세션 관리 함수들
+const saveChatSessions = (sessions: SavedChatSession[]) => {
+  try {
+    localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(sessions));
+  } catch (error) {
+    console.error("채팅 세션 저장 오류:", error);
+  }
+};
+
+const loadChatSessions = (): SavedChatSession[] => {
+  try {
+    const saved = localStorage.getItem(CHAT_SESSIONS_KEY);
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (error) {
+    console.error("채팅 세션 로드 오류:", error);
+  }
+  return [];
+};
+
+const saveCurrentChatId = (chatId: number) => {
+  try {
+    localStorage.setItem(CURRENT_CHAT_ID_KEY, chatId.toString());
+  } catch (error) {
+    console.error("현재 채팅 ID 저장 오류:", error);
+  }
+};
+
+const loadCurrentChatId = (): number => {
+  try {
+    const saved = localStorage.getItem(CURRENT_CHAT_ID_KEY);
+    if (saved) {
+      return parseInt(saved, 10);
+    }
+  } catch (error) {
+    console.error("현재 채팅 ID 로드 오류:", error);
+  }
+  return Date.now(); // 기본값으로 현재 타임스탬프 사용
+};
 
 // 파일을 base64로 변환하는 유틸리티 함수
 const fileToBase64 = (file: File): Promise<string> => {
@@ -134,7 +194,8 @@ export function ChatArea({
   const [fileUploadState, setFileUploadState] = useState<FileUploadState>({
     isUploading: false,
     error: null,
-    uploadedUrl: null
+    uploadedUrl: null,
+    messages: [],
   });
   // 이미지생성
   const { iconSrc, loading: isIconGenerating, error: iconError, generate: generateIcon, clearIcon } = useImageGeneration();
@@ -167,6 +228,50 @@ export function ChatArea({
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [isSearchMode, setIsSearchMode] = useState<boolean>(false);
 
+  // 파일 업로드 관련 상태 추가
+  const [uploadedFileId, setUploadedFileId] = useState<string | null>(null);
+  const [vectorStoreId, setVectorStoreId] = useState<string | null>(null);
+  const [isFileMode, setIsFileMode] = useState<boolean>(false);
+
+  // 자동 저장 상태 관리
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+
+  // 삭제 확인 다이얼로그 상태
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState<boolean>(false);
+  const [chatToDelete, setChatToDelete] = useState<{id: number, title: string} | null>(null);
+
+  // 초기 인사말 설정을 위한 함수
+  const showInitialGreeting = useCallback(() => {
+    // 컴포넌트 마운트 시 초기 메시지 설정
+    const initialMessage: Message = {
+      id: 1,
+      role: "system",
+      content: "무엇을 도와드릴까요?",
+    };
+
+    // 스트리밍 효과를 위해 빈 메시지로 시작
+    setMessages([{ ...initialMessage, content: "" }]);
+    setIsStreaming(true);
+
+    // 점진적으로 글자를 추가하여 스트리밍 효과 구현
+    let text = "무엇을 도와드릴까요?";
+    let currentIndex = 0;
+
+    const interval = setInterval(() => {
+      if (currentIndex <= text.length) {
+        setMessages([
+          { ...initialMessage, content: text.substring(0, currentIndex) },
+        ]);
+        currentIndex++;
+      } else {
+        setIsStreaming(false);
+        clearInterval(interval);
+      }
+    }, 50);
+
+    return interval;
+  }, []);
+
   // 전역 chatHistory 상태를 공유하기 위한 이벤트 발송 함수
   const broadcastChatHistory = useCallback(() => {
     // 채팅 히스토리가 업데이트됨을 알리는 커스텀 이벤트 생성
@@ -175,6 +280,193 @@ export function ChatArea({
     });
     window.dispatchEvent(event);
   }, [chatHistory]);
+
+  // 현재 채팅 세션을 localStorage에 저장하는 함수
+  const saveCurrentChatSession = useCallback(() => {
+    if (messages.length === 0) return; // 빈 채팅은 저장하지 않음
+
+    setIsSaving(true); // 저장 중 상태 표시
+
+    const sessions = loadChatSessions();
+    const currentSession: SavedChatSession = {
+      id: currentChatId,
+      title: chatTitle,
+      lastMessage: messages[messages.length - 1]?.content?.substring(0, 50) + "..." || "",
+      timestamp: new Date().toISOString(),
+      messages: messages,
+      isFileMode: isFileMode,
+      vectorStoreId: vectorStoreId || undefined,
+    };
+
+    // 기존 세션 업데이트 또는 새로 추가
+    const existingIndex = sessions.findIndex(s => s.id === currentChatId);
+    if (existingIndex >= 0) {
+      sessions[existingIndex] = currentSession;
+    } else {
+      sessions.unshift(currentSession); // 최신순으로 정렬
+    }
+
+    // 최대 50개 세션만 유지
+    if (sessions.length > 50) {
+      sessions.splice(50);
+    }
+
+    saveChatSessions(sessions);
+    saveCurrentChatId(currentChatId);
+
+    // 저장 완료 효과
+    setTimeout(() => {
+      setIsSaving(false);
+    }, 200); // 200ms 후 저장 완료로 변경
+  }, [currentChatId, chatTitle, messages, isFileMode, vectorStoreId]);
+
+  // 특정 채팅 세션을 로드하는 함수
+  const loadChatSession = useCallback((sessionId: number) => {
+    const sessions = loadChatSessions();
+    const session = sessions.find(s => s.id === sessionId);
+    
+    if (session) {
+      setCurrentChatId(session.id);
+      setChatTitle(session.title);
+      setMessages(session.messages);
+      setIsFileMode(session.isFileMode || false);
+      setVectorStoreId(session.vectorStoreId || null);
+      
+      console.log(`채팅 세션 로드됨: ${session.title} (${session.messages.length}개 메시지)`);
+    }
+  }, []);
+
+  // 특정 채팅 세션을 삭제하는 함수
+  const deleteChatSession = useCallback((sessionId: number) => {
+    const sessions = loadChatSessions();
+    const filteredSessions = sessions.filter(s => s.id !== sessionId);
+    saveChatSessions(filteredSessions);
+
+    // 채팅 히스토리 상태 업데이트
+    const historyData: ChatHistory[] = filteredSessions.map(s => ({
+      id: s.id,
+      title: s.title,
+      lastMessage: s.lastMessage,
+      timestamp: new Date(s.timestamp),
+      messages: s.messages,
+    }));
+    setChatHistory(historyData);
+
+    // 삭제된 채팅이 현재 채팅인 경우 새 채팅 시작
+    if (sessionId === currentChatId) {
+      if (filteredSessions.length > 0) {
+        // 다른 채팅이 있으면 가장 최근 채팅으로 전환
+        loadChatSession(filteredSessions[0].id);
+      } else {
+        // 모든 채팅이 삭제되면 새 채팅 시작 (직접 구현)
+        const newChatId = Date.now();
+        setCurrentChatId(newChatId);
+        setSelectedFile(null);
+        setPreviewUrl(null);
+        setError(null);
+        setStreamingMessage("");
+        setInput("");
+        setIsLoading(false);
+        setIsStreaming(false);
+        setMessages([]);
+        setChatTitle("새 대화");
+        setIsFileMode(false);
+        setVectorStoreId(null);
+        setWebSearchEnabled(false);
+        setIsSearchMode(false);
+        saveCurrentChatId(newChatId);
+        setChatId((prev) => prev + 1);
+      }
+    }
+
+    console.log(`채팅 세션 삭제됨: ID ${sessionId}`);
+  }, [currentChatId, loadChatSession]);
+
+  // 삭제 확인 핸들러
+  const handleConfirmDelete = useCallback(() => {
+    if (chatToDelete) {
+      deleteChatSession(chatToDelete.id);
+      setDeleteDialogOpen(false);
+      setChatToDelete(null);
+    }
+  }, [chatToDelete, deleteChatSession]);
+
+  // 삭제 취소 핸들러
+  const handleCancelDelete = useCallback(() => {
+    setDeleteDialogOpen(false);
+    setChatToDelete(null);
+  }, []);
+
+  // 컴포넌트 마운트 시 저장된 채팅 로드
+  useEffect(() => {
+    const savedChatId = loadCurrentChatId();
+    const sessions = loadChatSessions();
+    
+    if (sessions.length > 0) {
+      // 저장된 현재 채팅 ID가 있으면 해당 채팅 로드
+      const currentSession = sessions.find(s => s.id === savedChatId);
+      if (currentSession) {
+        loadChatSession(savedChatId);
+        
+        // 채팅 히스토리 상태 업데이트
+        const historyData: ChatHistory[] = sessions.map(s => ({
+          id: s.id,
+          title: s.title,
+          lastMessage: s.lastMessage,
+          timestamp: new Date(s.timestamp),
+          messages: s.messages,
+        }));
+        setChatHistory(historyData);
+        return;
+      }
+    }
+    
+    // 저장된 세션이 없으면 새 채팅 시작
+    const newChatId = Date.now();
+    setCurrentChatId(newChatId);
+    saveCurrentChatId(newChatId);
+    setChatTitle("새 대화");
+    
+    // 새 채팅이므로 인사말 표시
+    const interval = showInitialGreeting();
+    return () => clearInterval(interval);
+  }, []); // 컴포넌트 마운트 시에만 실행
+
+  // 메시지가 변경될 때마다 자동 저장
+  useEffect(() => {
+    if (messages.length > 0) {
+      // 디바운스를 위해 500ms 지연
+      const timeoutId = setTimeout(() => {
+        saveCurrentChatSession();
+      }, 500);
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [messages, saveCurrentChatSession]);
+
+  // 채팅 제목이 변경될 때도 자동 저장
+  useEffect(() => {
+    if (messages.length > 0 && chatTitle && chatTitle !== "새 대화") {
+      // 디바운스를 위해 1초 지연
+      const timeoutId = setTimeout(() => {
+        saveCurrentChatSession();
+      }, 1000);
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [chatTitle, saveCurrentChatSession, messages.length]);
+
+  // 파일 모드나 벡터 스토어 ID가 변경될 때도 자동 저장
+  useEffect(() => {
+    if (messages.length > 0) {
+      // 디바운스를 위해 500ms 지연
+      const timeoutId = setTimeout(() => {
+        saveCurrentChatSession();
+      }, 500);
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [isFileMode, vectorStoreId, saveCurrentChatSession, messages.length]);
 
   // 채팅 히스토리 업데이트 시 이벤트 발송
   useEffect(() => {
@@ -221,43 +513,85 @@ export function ChatArea({
     };
   }, []); // 빈 의존성 배열로 컴포넌트 마운트/언마운트 시에만 실행
 
-  // 초기 인사말 설정을 위한 함수
-  const showInitialGreeting = useCallback(() => {
-    // 컴포넌트 마운트 시 초기 메시지 설정
-    const initialMessage: Message = {
-      id: 1,
-      role: "system",
-      content: "무엇을 도와드릴까요?",
+  // 채팅 삭제 이벤트 리스너 추가
+  useEffect(() => {
+    // 이벤트 리스너 함수 생성
+    const handleDeleteChatEvent = (event: CustomEvent) => {
+      console.log("Delete Chat 이벤트 감지됨!", event.detail);
+      const { chatId, chatTitle } = event.detail;
+      setDeleteDialogOpen(true);
+      setChatToDelete({ id: chatId, title: chatTitle });
     };
 
-    // 스트리밍 효과를 위해 빈 메시지로 시작
-    setMessages([{ ...initialMessage, content: "" }]);
-    setIsStreaming(true);
+    // 이벤트 리스너 등록
+    window.addEventListener(
+      "deleteChat",
+      handleDeleteChatEvent as EventListener
+    );
 
-    // 점진적으로 글자를 추가하여 스트리밍 효과 구현
-    let text = "무엇을 도와드릴까요?";
-    let currentIndex = 0;
+    // 컴포넌트 언마운트 시 이벤트 리스너 제거
+    return () => {
+      window.removeEventListener(
+        "deleteChat",
+        handleDeleteChatEvent as EventListener
+      );
+    };
+  }, []); // deleteChatSession 의존성 추가
 
-    const interval = setInterval(() => {
-      if (currentIndex <= text.length) {
-        setMessages([
-          { ...initialMessage, content: text.substring(0, currentIndex) },
-        ]);
-        currentIndex++;
-      } else {
-        setIsStreaming(false);
-        clearInterval(interval);
-      }
-    }, 50);
-
-    return interval;
-  }, []);
-
-  // 컴포넌트 마운트 시 초기 인사말 표시
+  // 채팅 제목 업데이트 이벤트 리스너 추가
   useEffect(() => {
+    // 이벤트 리스너 함수 생성
+    const handleUpdateChatTitleEvent = (event: CustomEvent) => {
+      console.log("Update Chat Title 이벤트 감지됨!", event.detail);
+      const { chatId, newTitle } = event.detail;
+      
+      // 현재 채팅의 제목 업데이트
+      if (chatId === currentChatId) {
+        setChatTitle(newTitle);
+      }
+      
+      // localStorage의 채팅 세션도 업데이트
+      const sessions = loadChatSessions();
+      const sessionIndex = sessions.findIndex(s => s.id === chatId);
+      if (sessionIndex >= 0) {
+        sessions[sessionIndex].title = newTitle;
+        saveChatSessions(sessions);
+        
+        // 채팅 히스토리 상태도 업데이트
+        const historyData: ChatHistory[] = sessions.map(s => ({
+          id: s.id,
+          title: s.title,
+          lastMessage: s.lastMessage,
+          timestamp: new Date(s.timestamp),
+          messages: s.messages,
+        }));
+        setChatHistory(historyData);
+      }
+    };
+
+    // 이벤트 리스너 등록
+    window.addEventListener(
+      "updateChatTitle",
+      handleUpdateChatTitleEvent as EventListener
+    );
+
+    // 컴포넌트 언마운트 시 이벤트 리스너 제거
+    return () => {
+      window.removeEventListener(
+        "updateChatTitle",
+        handleUpdateChatTitleEvent as EventListener
+      );
+    };
+  }, [currentChatId]); // currentChatId 의존성 추가
+
+  // 새 채팅 시작 시 초기 인사말 표시 (chatId 변경 시에만)
+  useEffect(() => {
+    // chatId가 변경되었고, 메시지가 없는 경우에만 초기 인사말 표시
+    if (messages.length === 0 && chatId > 1) { // chatId > 1은 새 채팅 시작을 의미
     const interval = showInitialGreeting();
     return () => clearInterval(interval);
-  }, [chatId, showInitialGreeting]);
+    }
+  }, [chatId]); // showInitialGreeting 의존성 제거
 
   // AI 응답이 끝나면 입력창으로 포커스 이동
   useEffect(() => {
@@ -310,18 +644,9 @@ export function ChatArea({
     }
   }, [isStreaming]);
 
-  
-  // 사용 가능한 모델 목록 - 프론트엔드에 고정
-  const models: Model[] = [
-    { id: "gpt-4o", name: "GPT-4o" },
-    { id: "azure.gpt-4o-2024-11-20", name: "PWCGPT-4o" },
-    { id: "o4-mini", name: "O4-mini" },
-    { id: "o3", name: "O3" },
-  ];
-
-  // 선택된 모델 상태 - 기본값을 PWCGPT-4o로 변경
-  const [selectedModel, setSelectedModel] = useState<Model>(models[2]); // azure.gpt-4o-2024-11-20
-
+  const models: Model[] = getModels(process.env.NEXT_PUBLIC_MODEL_PRESET);
+  // 선택된 모델 상태
+  const [selectedModel, setSelectedModel] = useState<Model>(models[0]);
 
   // 이미지가 화면에 표시되고 있는지 확인하는 함수
   const isImageVisible = (): boolean => {
@@ -588,62 +913,59 @@ export function ChatArea({
     }
   };
   
-  // 파일 선택 핸들러 - 이미지/PDF 구분하여 각각 다른 처리 함수로 분기
-  // PDF 선택 시 즉시 processPDFUpload 실행, 이미지 선택 시 미리보기만 생성
+  // 파일 선택 핸들러 (이미지 전용) <- 병합전 브랜치에서 이미지/PDF 구분하여 각각 다른 처리 함수로 분기 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
-  
+
     if (file) {
-      // 파일 타입 검증 로직 (기존 유지)
-      const validTypes = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
+      // 파일 타입 검증 (이미지만)
+      const validTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
       if (!validTypes.includes(file.type)) {
-        setError("지원되지 않는 파일 형식입니다. 이미지(JPEG, PNG, GIF, WEBP) 또는 PDF 파일만 지원합니다.");
-        if (fileInputRef.current) fileInputRef.current.value = "";
-        if (pdfInputRef.current) pdfInputRef.current.value = "";
+        setError(
+          "지원되지 않는 이미지 형식입니다. JPEG, PNG, GIF 또는 WEBP 형식만 지원합니다."
+        );
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
         return;
       }
-  
-      // 파일 크기 검증
-      const maxSize = file.type === "application/pdf" ? 50 * 1024 * 1024 : 25 * 1024 * 1024;
+
+      // 파일 크기 검증 (25MB로 수정) 🔄 현재 브랜치 기준으로 변경
+      const maxSize = 25 * 1024 * 1024; // 25MB (기존: 20MB)
       if (file.size > maxSize) {
-        const limitMB = file.type === "application/pdf" ? "50MB" : "25MB";
-        setError(`파일 크기가 너무 큽니다. ${file.type === "application/pdf" ? "PDF는" : "이미지는"} 최대 ${limitMB}까지 지원합니다.`);
-        if (fileInputRef.current) fileInputRef.current.value = "";
-        if (pdfInputRef.current) pdfInputRef.current.value = "";
+        setError("이미지 크기가 너무 큽니다. 최대 25MB까지 지원합니다."); // 🔄 메시지 수정
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
         return;
       }
-  
+
+      console.log(
+        `File selected: ${file.name}, type: ${file.type}, size: ${(
+          file.size /
+          1024 /
+          1024
+        ).toFixed(2)}MB`
+      );
       setSelectedFile(file);
       setError(null);
-  
-      // PDF 파일이면 즉시 선행 add-on 실행 (파일 직접 전달)
-      // 🆕 아이콘 생성 시작할 때 로딩 시작
-      setIsLoading(true);
-      console.log("🎨 Starting icon generation for:", file.name);
-      generateIcon(file.name).catch(err => {
-        console.error("Icon generation failed:", err);
-      });
-  
-      if (file.type === "application/pdf") {
-        setPreviewUrl(null);
-        processPDFUpload(file); // PDF 전용 선행 처리 함수 호출
-      } else {
-        // 이미지는 미리보기 생성 (기존 로직 유지)
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          setPreviewUrl(reader.result as string);
-        };
-        reader.onerror = () => {
-          setError("이미지 파일을 읽는 중 오류가 발생했습니다.");
-          setSelectedFile(null);
-          if (fileInputRef.current) fileInputRef.current.value = "";
-        };
-        reader.readAsDataURL(file);
-      }
+
+      // 이미지 미리보기 생성
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPreviewUrl(reader.result as string);
+      };
+      reader.onerror = () => {
+        setError("이미지 파일을 읽는 중 오류가 발생했습니다.");
+        setSelectedFile(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
+      };
+      reader.readAsDataURL(file);
     }
   };
 
-  // 이미지/PDF 분석 핸들러 - 파일 타입에 따라 적절한 API 엔드포인트로 분기
   const handleImageAnalysis = async () => {
     try {
       setIsLoading(true);
@@ -718,7 +1040,7 @@ export function ChatArea({
         id: messages.length + 1,
         role: "user",
         content: input || `이 ${fileTypeName}를 분석해주세요.`,
-        imageUrl: isPdf ? undefined : imageData, // PDF는 이미지 URL 없음
+        imageUrl: isPdf ? undefined : (imageData || undefined), // PDF는 이미지 URL 없음
       };
       
       // 메시지 목록에 사용자 메시지 추가
@@ -792,6 +1114,8 @@ export function ChatArea({
         }
       }
       
+      console.log(`Debug - Sending request with model: ${selectedModel.id}`);
+
       // API 요청
       const controller = new AbortController();
       const timeoutId = setTimeout(() => {
@@ -877,6 +1201,8 @@ export function ChatArea({
 
               if (data.content) {
                 fullContent += data.content;
+
+                // 실시간으로 메시지 업데이트
                 setMessages((currentMessages) =>
                   currentMessages.map((msg) =>
                     msg.id === newMessageId
@@ -939,6 +1265,69 @@ export function ChatArea({
     }
   };
 
+  // 파일 업로드 핸들러 (개량된 하이브리드 버전)
+  const handleFileUpload = async (files: File[]) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      console.log(`${files.length}개 파일 업로드 시작`);
+      
+      for (const file of files) {
+        console.log(`- ${file.name}, 타입: ${file.type}, 크기: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
+        
+        // PDF 파일인 경우: 기존 브랜치 로직 사용
+        if (file.type === "application/pdf") {
+          console.log("PDF 파일 감지 - 기존 처리 방식 사용");
+          setSelectedFile(file); // 기존 state도 설정
+          setPreviewUrl(null); // ← 이것만 추가하면 됨
+          
+          // 🆕 아이콘 생성 시작
+          generateIcon(file.name).catch(err => {
+            console.error("Icon generation failed:", err);
+          });
+          
+          // 기존 processPDFUpload 로직 호출
+          await processPDFUpload(file);
+        } else {
+          // PDF 외의 파일: 벡터 스토어 처리 (주석 처리)
+          console.log(`${file.type} 파일 - 벡터 스토어 처리 예정 (현재 주석)`);
+          
+          /* TODO: 백엔드 구현 후 활성화
+          const formData = new FormData();
+          formData.append("files", file);
+          
+          const response = await fetch(`${API_URL}/upload-multiple-files`, {
+            method: "POST", 
+            body: formData
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            setVectorStoreId(data.vector_store_id);
+            setIsFileMode(true);
+          }
+          */
+          
+          // 임시 성공 메시지
+          const tempMessage: Message = {
+            id: messages.length + 1,
+            role: "system",
+            content: `${file.name} 파일이 선택되었습니다. (벡터 스토어 기능은 개발 예정)`
+          };
+          setMessages(prev => [...prev, tempMessage]);
+        }
+      }
+      
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "파일 업로드 중 오류가 발생했습니다.";
+      setError(errorMsg);
+      console.error("파일 업로드 오류:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // 메시지 전송 함수 수정 - 웹 검색 지원 추가
   const sendMessage = async () => {
     // 입력 없고 이미지도 없으면 아무 것도 하지 않음
@@ -961,6 +1350,87 @@ export function ChatArea({
       await handleImageAnalysis();
       return;
     }
+    
+    // 파일 모드인 경우 파일 질의 API 사용
+    if (isFileMode && vectorStoreId) {
+      try {
+        setIsLoading(true);
+        setError(null);
+        
+        // 사용자 메시지 추가
+        const userMessage: Message = {
+          id: messages.length + 1,
+          role: "user",
+          content: currentInput
+        };
+        
+        setMessages(prev => [...prev, userMessage]);
+        setInput("");
+        
+        // 파일 질의에 사용할 대화 히스토리 준비 (파일 관련 메시지만 포함)
+        const fileRelatedMessages = messages.filter(
+          (msg) =>
+            // 파일 업로드 안내 메시지나 파일 관련 시스템 메시지는 제외
+            !(msg.role === "system" && 
+              (msg.content.includes("파일이 성공적으로 업로드") || 
+               msg.content.includes("무엇을 도와드릴까요?") ||
+               msg.content.includes("이전 대화를 불러왔습니다")))
+        );
+        
+        // 새 사용자 메시지도 히스토리에 추가
+        const conversationHistory = [
+          ...fileRelatedMessages.map((msg) => ({
+            role: msg.role,
+            content: msg.content,
+          })),
+          {
+            role: userMessage.role,
+            content: userMessage.content,
+          }
+        ];
+        
+        // 파일 질의 API 호출
+        const response = await fetch(`${API_URL}/query-file`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            query: currentInput,
+            vector_store_id: vectorStoreId,
+            conversation_history: conversationHistory,  // 대화 히스토리 포함
+            model: selectedModel.id  // 선택된 모델 포함
+          })
+        });
+        
+        if (!response.ok) {
+          throw new Error(`API 요청 실패: ${response.status} ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        
+        // 시스템 메시지 추가
+        const newMessageId = messages.length + 2;
+        const systemMessage: Message = {
+          id: newMessageId,
+          role: "system",
+          content: data.response,
+          citations: data.annotations || []
+        };
+        
+        setMessages(prev => [...prev, systemMessage]);
+        
+      } catch (err) {
+        console.error("파일 질의 오류:", err);
+        setError(err instanceof Error ? err.message : "파일 질의 중 오류가 발생했습니다.");
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+    
+    // 이후 기존 코드 유지 (웹 검색 또는 일반 채팅)
+    // ...
 
     // 기존 텍스트 메시지 처리 로직
     const userMessage: Message = {
@@ -980,6 +1450,7 @@ export function ChatArea({
             ? currentInput.substring(0, 30) + "..."
             : currentInput,
         timestamp: new Date(),
+        messages: [userMessage],
       };
 
       setChatHistory((prev) => [
@@ -998,6 +1469,7 @@ export function ChatArea({
                     ? currentInput.substring(0, 30) + "..."
                     : currentInput,
                 timestamp: new Date(),
+                messages: [...chat.messages, userMessage],
               }
             : chat
         )
@@ -1260,9 +1732,9 @@ export function ChatArea({
   };
 
   // PDF 선택 버튼 클릭 핸들러
-  const handlePdfSelectClick = () => {
-    pdfInputRef.current?.click();
-  };
+  // const handlePdfSelectClick = () => {
+  //   pdfInputRef.current?.click();
+  // };
 
   // 파일 제거 핸들러
   const handleRemoveFile = () => {
@@ -1321,10 +1793,22 @@ export function ChatArea({
 
   // 새로운 함수: 채팅 제목 편집 완료
   const finishTitleEdit = () => {
+    let finalTitle = chatTitle.trim();
+    
     // 빈 제목이면 기본값으로 설정
-    if (!chatTitle.trim()) {
-      setChatTitle("새 대화");
+    if (!finalTitle) {
+      finalTitle = "새 대화";
+      setChatTitle(finalTitle);
     }
+    
+    // 사이드바에 제목 변경 알림 이벤트 발송
+    if (messages.length > 0) { // 메시지가 있는 경우에만 이벤트 발송
+      const event = new CustomEvent("updateChatTitle", {
+        detail: { chatId: currentChatId, newTitle: finalTitle },
+      });
+      window.dispatchEvent(event);
+    }
+    
     setIsEditingTitle(false);
   };
 
@@ -1341,7 +1825,16 @@ export function ChatArea({
 
   // 채팅 초기화 함수 수정 - 새 채팅 생성
   const startNewChat = () => {
+    // 현재 채팅 저장
+    if (messages.length > 0) {
+      saveCurrentChatSession();
+    }
+
+    // 새 채팅 ID 생성
+    const newChatId = Date.now();
+    
     // 모든 상태 초기화
+    setCurrentChatId(newChatId);
     setSelectedFile(null);
     setPreviewUrl(null);
     setError(null);
@@ -1350,13 +1843,16 @@ export function ChatArea({
     setIsLoading(false);
     setIsStreaming(false);
     setMessages([]);
-    setChatTitle("Current Chat");
+    setChatTitle("새 대화");
+    setIsFileMode(false);
+    setVectorStoreId(null);
+    setWebSearchEnabled(false);
+    setIsSearchMode(false);
 
     clearIcon();
-    
-    // 새 채팅 ID 생성
-    const newChatId = Date.now();
-    setCurrentChatId(newChatId);
+
+    // 새 채팅 ID 저장
+    saveCurrentChatId(newChatId);
 
     // chatId를 증가시켜 새로운 useEffect 트리거
     setChatId((prev) => prev + 1);
@@ -1368,28 +1864,34 @@ export function ChatArea({
       pdfInputRef.current.value = "";
     }
 
+    // 채팅 히스토리 업데이트
+    const sessions = loadChatSessions();
+    const historyData: ChatHistory[] = sessions.map(s => ({
+      id: s.id,
+      title: s.title,
+      lastMessage: s.lastMessage,
+      timestamp: new Date(s.timestamp),
+      messages: s.messages,
+    }));
+    setChatHistory(historyData);
+
+    console.log(`새 채팅 시작: ID ${newChatId}`);
+
     // 포커스 설정
     setTimeout(() => {
       inputRef.current?.focus();
     }, 500);
   };
 
-  // 채팅 전환 함수 추가
+  // 채팅 전환 함수 수정
   const switchToChat = (chat: ChatHistory) => {
-    // 현재 채팅 저장 로직 추가 필요 (필요한 경우)
+    // 현재 채팅이 변경되었으면 저장
+    if (messages.length > 0 && chat.id !== currentChatId) {
+      saveCurrentChatSession();
+    }
 
     // 선택한 채팅으로 상태 업데이트
-    setCurrentChatId(chat.id);
-    setChatTitle(chat.title);
-
-    // 선택한 채팅의 메시지 로드 로직 필요 (현재는 빈 구현)
-    setMessages([
-      {
-        id: 1,
-        role: "system",
-        content: "이전 대화를 불러왔습니다. 계속 대화를 이어나가세요.",
-      },
-    ]);
+    loadChatSession(chat.id);
 
     // 상태 초기화
     setSelectedFile(null);
@@ -1399,6 +1901,8 @@ export function ChatArea({
     setInput("");
     setIsLoading(false);
     setIsStreaming(false);
+
+    console.log(`채팅 전환: ${chat.title} (ID: ${chat.id})`);
 
     // 포커스 설정
     setTimeout(() => {
@@ -1493,20 +1997,47 @@ export function ChatArea({
 
         {/* 오른쪽: 테마 토글/메뉴/유저 버튼 */}
         <div className="flex items-center gap-2">
+          {/* 저장 상태 인디케이터 */}
+          {messages.length > 0 && (
+            <div className={`text-xs transition-all duration-300 ${
+              isSaving 
+                ? "text-gray-600 dark:text-gray-300" 
+                : "text-gray-400 dark:text-gray-500"
+            }`}>
+              {isSaving ? "저장 중..." : "자동 저장됨"}
+            </div>
+          )}
+
+          {/* 현재 채팅 삭제 버튼 */}
+          {messages.length > 0 && ( // 메시지가 하나라도 있으면 삭제 버튼 표시
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setDeleteDialogOpen(true);
+                setChatToDelete({ id: currentChatId, title: chatTitle });
+              }}
+              className="h-8 w-8 p-0 text-gray-400 hover:text-red-500 dark:text-gray-500 dark:hover:text-red-400"
+              title="현재 채팅 삭제"
+            >
+              <X size={16} />
+            </Button>
+          )}
+          
           {/* 메뉴: 오른쪽에 배치, 더 작고 세련된 스타일 */}
           <nav className="ml-2">
             <ul className="flex space-x-3">
               <li>
-                <a href="#" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">문서번역</a>
+                <a href="https://chatonelingo.pwc.kr" target="_blank" rel="noopener noreferrer" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">문서번역</a>
               </li>
               <li>
-                <a href="#" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">계약서 검토</a>
+                <a href="https://documentai-dev.pwc.kr" target="_blank" rel="noopener noreferrer" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">계약서 검토</a>
               </li>
               <li>
-                <a href="#" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">AI Accountant</a>
+                <a href="https://aia.samil.com/" target="_blank" rel="noopener noreferrer" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">AI Accountant</a>
               </li>
               <li>
-                <a href="#" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">Tax AI</a>
+                <a href="https://taxai.pwc.kr/" target="_blank" rel="noopener noreferrer" className="text-gray-500 dark:text-gray-300 hover:text-orange-500 dark:hover:text-orange-400 text-sm px-2 py-1 rounded transition-colors font-medium">Tax AI</a>
               </li>
             </ul>
           </nav>
@@ -1624,13 +2155,6 @@ export function ChatArea({
             accept="image/jpeg,image/png,image/webp,image/gif"
             className="hidden"
           />
-          <input
-            type="file"
-            ref={pdfInputRef}
-            onChange={handleFileChange}
-            accept="application/pdf,.pdf"
-            className="hidden"
-          />
           <div className="group relative">
             <Button
               type="button"
@@ -1645,27 +2169,11 @@ export function ChatArea({
               <span className="sr-only">Upload Image</span>
             </Button>
             <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 p-2 bg-black text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50">
-              이미지 업로드 (최대 25MB)
+              이미지 업로드 (최대 20MB)
             </div>
           </div>
 
-          <div className="group relative">
-            <Button
-              type="button"
-              size="icon"
-              variant="outline"
-              onClick={handlePdfSelectClick}
-              disabled={isLoading || isSearchMode}
-              className="border-gray-200 dark:border-secondary hover:bg-gray-100 dark:hover:bg-secondary/80"
-              title="PDF 업로드"
-            >
-              <FileText size={18} />
-              <span className="sr-only">Upload PDF</span>
-            </Button>
-            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 p-2 bg-black text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50">
-              PDF 업로드 (최대 50MB)
-            </div>
-          </div>
+          <FileUpload onFileSelect={handleFileUpload} />
 
           <div className="group relative">
             <Button
@@ -1713,9 +2221,7 @@ export function ChatArea({
               webSearchEnabled
                 ? "웹 검색어를 입력하세요..."
                 : selectedFile
-                ? selectedFile.type === "application/pdf"
-                  ? "PDF에 대한 질문을 입력하세요..."
-                  : "이미지에 대한 질문을 입력하세요..."
+                ? "이미지에 대한 질문을 입력하세요..."
                 : "Type your message..."
             }
             className="flex-1 border-gray-200 dark:bg-secondary dark:border-secondary focus-visible:ring-orange-500 focus-visible:border-orange-500"
@@ -1754,8 +2260,13 @@ export function ChatArea({
         </div>
         {selectedFile && (
           <p className="text-xs text-center text-gray-500 dark:text-muted-foreground mt-2">
-            선택된 {selectedFile.type === "application/pdf" ? "PDF" : "이미지"}: {selectedFile.name} (
+            선택된 이미지: {selectedFile.name} (
             {(selectedFile.size / (1024 * 1024)).toFixed(2)}MB)
+          </p>
+        )}
+        {isFileMode && (
+          <p className="text-xs text-center text-blue-500 mt-2">
+            파일 질의 모드: 업로드된 파일에 대해 질문할 수 있습니다
           </p>
         )}
         {isSearchMode && (
@@ -1767,6 +2278,43 @@ export function ChatArea({
           AI may produce inaccurate information about people, places, or facts.
         </p>
       </div>
+
+      {/* 삭제 확인 다이얼로그 */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600 dark:text-red-400">
+              <X size={20} />
+              채팅 삭제
+            </DialogTitle>
+            <DialogDescription className="pt-2">
+              <span className="font-medium text-gray-900 dark:text-gray-100">"{chatToDelete?.title}"</span> 채팅을 정말로 삭제하시겠습니까?
+              <br />
+              <span className="text-sm text-gray-500 dark:text-gray-400 mt-1 block">
+                이 작업은 되돌릴 수 없습니다.
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleCancelDelete}
+              className="flex-1 sm:flex-none"
+            >
+              취소
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              className="flex-1 sm:flex-none bg-red-600 hover:bg-red-700 text-white"
+            >
+              삭제
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

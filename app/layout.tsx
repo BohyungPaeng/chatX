@@ -9,7 +9,7 @@ const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Chat X",
-  description: "chat X",
+  description: "Chat X",
   generator: "",
 };
 

@@ -95,19 +95,19 @@ body {
 
 /* 코드 블록 스타일링 */
 .prose pre {
-  @apply p-4 rounded-md overflow-auto bg-gray-100 dark:bg-gray-800 shadow-sm border border-gray-200 dark:border-gray-700;
+  @apply p-4 rounded-md overflow-auto bg-gray-100 dark:bg-gray-800 shadow-sm border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-200;
 }
 
 .prose code {
-  @apply text-sm font-mono font-medium text-black dark:text-white;
+  @apply text-sm font-mono font-medium text-gray-800 dark:text-gray-200;
 }
 
 .prose pre code {
-  @apply text-black dark:text-white;
+  @apply text-gray-800 dark:text-gray-200;
 }
 
 .prose code:not(pre code) {
-  @apply bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-black dark:text-white;
+  @apply bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded text-gray-800 dark:text-gray-200;
 }
 
 /* 코드 블록 복사 버튼 */
@@ -135,67 +135,195 @@ body {
   @apply bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300 border-orange-300 dark:border-orange-800;
 }
 
-/* Syntax highlighting */
+/* 코드 블록 강제 색상 적용 - 최고 우선순위 */
+.prose pre,
+.prose pre *,
+pre,
+pre * {
+  color: #374151 !important; /* gray-700 */
+}
+
+.dark .prose pre,
+.dark .prose pre *,
+.dark pre,
+.dark pre * {
+  color: #e5e7eb !important; /* gray-200 */
+}
+
+/* Syntax highlighting - 강제 적용 */
 .hljs-comment,
 .hljs-quote {
   @apply text-gray-600 dark:text-gray-400 italic;
+  color: #4b5563 !important;
+}
+
+.dark .hljs-comment,
+.dark .hljs-quote {
+  color: #9ca3af !important;
 }
 
 .hljs-keyword,
 .hljs-selector-tag,
 .hljs-subst {
   @apply text-blue-700 dark:text-blue-300 font-semibold;
+  color: #1d4ed8 !important;
+}
+
+.dark .hljs-keyword,
+.dark .hljs-selector-tag,
+.dark .hljs-subst {
+  color: #93c5fd !important;
 }
 
 .hljs-string,
 .hljs-doctag,
 .hljs-regexp {
   @apply text-green-700 dark:text-green-300;
+  color: #15803d !important;
+}
+
+.dark .hljs-string,
+.dark .hljs-doctag,
+.dark .hljs-regexp {
+  color: #86efac !important;
 }
 
 .hljs-title,
 .hljs-section,
 .hljs-selector-id {
   @apply text-purple-700 dark:text-purple-300 font-bold;
+  color: #7c3aed !important;
+}
+
+.dark .hljs-title,
+.dark .hljs-section,
+.dark .hljs-selector-id {
+  color: #c4b5fd !important;
 }
 
 .hljs-subst {
   @apply font-normal;
+  color: #374151 !important;
+}
+
+.dark .hljs-subst {
+  color: #e5e7eb !important;
 }
 
 .hljs-type,
 .hljs-class .hljs-title {
   @apply text-blue-700 dark:text-blue-200 font-semibold;
+  color: #1d4ed8 !important;
+}
+
+.dark .hljs-type,
+.dark .hljs-class .hljs-title {
+  color: #bfdbfe !important;
 }
 
 .hljs-tag,
 .hljs-name,
 .hljs-attribute {
   @apply text-blue-800 dark:text-blue-100 font-normal;
+  color: #1e40af !important;
+}
+
+.dark .hljs-tag,
+.dark .hljs-name,
+.dark .hljs-attribute {
+  color: #dbeafe !important;
 }
 
 .hljs-variable,
 .hljs-template-variable {
   @apply text-orange-600 dark:text-orange-200;
+  color: #ea580c !important;
+}
+
+.dark .hljs-variable,
+.dark .hljs-template-variable {
+  color: #fed7aa !important;
 }
 
 .hljs-number {
   @apply text-teal-700 dark:text-teal-300;
+  color: #0f766e !important;
+}
+
+.dark .hljs-number {
+  color: #5eead4 !important;
 }
 
 .hljs-literal {
   @apply text-blue-700 dark:text-blue-200;
+  color: #1d4ed8 !important;
+}
+
+.dark .hljs-literal {
+  color: #bfdbfe !important;
 }
 
 .hljs-meta,
 .hljs-meta-string {
   @apply text-gray-700 dark:text-gray-300;
+  color: #374151 !important;
+}
+
+.dark .hljs-meta,
+.dark .hljs-meta-string {
+  color: #d1d5db !important;
 }
 
 .hljs-emphasis {
   @apply italic;
+  color: #374151 !important;
+}
+
+.dark .hljs-emphasis {
+  color: #e5e7eb !important;
 }
 
 .hljs-strong {
   @apply font-bold;
+  color: #374151 !important;
+}
+
+.dark .hljs-strong {
+  color: #e5e7eb !important;
+}
+
+/* highlight.js 완전 오버라이드 - 최고 우선순위 */
+.hljs,
+.hljs * {
+  color: #374151 !important;
+  background: transparent !important;
+}
+
+.dark .hljs,
+.dark .hljs * {
+  color: #e5e7eb !important;
+  background: transparent !important;
+}
+
+/* 모든 코드 관련 요소 강제 적용 */
+code,
+code *,
+pre code,
+pre code *,
+.prose code,
+.prose code *,
+.prose pre code,
+.prose pre code * {
+  color: #374151 !important;
+}
+
+.dark code,
+.dark code *,
+.dark pre code,
+.dark pre code *,
+.dark .prose code,
+.dark .prose code *,
+.dark .prose pre code,
+.dark .prose pre code * {
+  color: #e5e7eb !important;
 }
