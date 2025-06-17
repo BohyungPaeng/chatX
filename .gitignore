@@ -64,3 +64,5 @@ Thumbs.db
 
 # Uploaded files (업로드된 파일들)
 uploads/
+
+./.claude

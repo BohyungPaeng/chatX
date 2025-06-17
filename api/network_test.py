@@ -4,7 +4,7 @@ import sys
 import ssl
 
 sys.path.append('.')
-from app.config import OPENAI_API_KEY
+from app.core.config import OPENAI_API_KEY
 
 print("Network connectivity test")
 

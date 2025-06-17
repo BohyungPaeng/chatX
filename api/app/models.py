@@ -1,129 +1,79 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Union, Dict, Any, Literal
-from fastapi import UploadFile
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text
+from sqlalchemy.sql import func
+from .core.database import Base
 
 
-class ChatMessage(BaseModel):
-    role: str = "user"
-    content: str
+class User(Base):
+
+    __tablename__ = "tb_users"
+    
+    # 기본 정보
+    id = Column(Integer, primary_key=True)
+    email = Column(String(254), unique=True, nullable=False)  # 이메일 (SSO 로그인용)
+    name = Column(String(100))  # 이름
+    
+    # 설정
+    is_active = Column(Boolean, default=True)  # 활성 여부
+    
+    # 시간
+    created_at = Column(DateTime, default=func.now())
+    last_login = Column(DateTime)
+    
+    def __repr__(self):
+        return f"<User(email='{self.email}', name='{self.name}')>"
 
 
-class ImageAnalysisRequest(BaseModel):
-    """
-    이미지 분석 요청 모델
-    """
-    image_url: Optional[str] = None
-    prompt: str
-    model: Optional[str] = None
-    max_tokens: int = 1000
-    detail: str = "auto"
-    stream: bool = False
-    conversation_history: Optional[List[ChatMessage]] = None
+class Conversation(Base):
+
+    __tablename__ = "tb_conversations"
+    
+    # 기본 정보  
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=False)  # 어떤 사용자의 대화인지
+    title = Column(String(255), default="새로운 대화")  # 대화 제목
+    
+    # 통계
+    message_count = Column(Integer, default=0)  # 메시지 개수
+    total_tokens = Column(Integer, default=0)  # 사용한 토큰 수
+    
+    # 상태
+    is_archived = Column(Boolean, default=False)  # 보관됨 여부
+    
+    # 시간
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<Conversation(title='{self.title}', user_id={self.user_id})>"
 
 
-class ImageAnalysisResponse(BaseModel):
-    response: str
-    model: str
-    usage: dict
-
-
-class ChatRequest(BaseModel):
-    messages: List[ChatMessage]
-    model: Optional[str] = None
-    temperature: float = 0.7
-    max_tokens: int = 1000
-    stream: bool = False
-    enable_web_search: Optional[bool] = False
-    search_query: Optional[str] = None
-
-
-class ChatResponse(BaseModel):
-    response: str
-    model: str
-    usage: dict
-    is_streaming: Optional[bool] = False
-    citations: Optional[List[Dict[str, str]]] = None
-
-
-class WebSearchRequest(BaseModel):
-    query: str
-    model: Optional[str] = None
-    temperature: float = 0.7
-    max_tokens: int = 1000
-    search_context_size: Optional[str] = "medium"  # low, medium, high 중 하나
-    # 예제 user_location:
-    # {
-    #   "country": "KR",
-    #   "city": "Seoul",
-    #   "region": "Seoul",
-    #   "timezone": "Asia/Seoul"
-    # }
-    user_location: Optional[Dict[str, str]] = None
-
-
-class WebSearchResponse(BaseModel):
-    response: str
-    model: Optional[str] = None
-    usage: Optional[Dict[str, Any]] = None
-    citations: Optional[List[Dict[str, Union[str, int]]]] = None 
-
-
-# 파일 업로드 및 검색 관련 모델 추가
-class FileUploadResponse(BaseModel):
-    """파일 업로드 응답 모델"""
-    success: bool
-    file_id: Optional[str] = None
-    vector_store_id: Optional[str] = None
-    error: Optional[str] = None
-
-
-class FileAnnotation(BaseModel):
-    """파일 인용 정보 모델"""
-    type: str
-    index: int
-    file_id: str
-    filename: str
-    quote: Optional[str] = None  # 실제 인용된 텍스트
-    page: Optional[int] = None   # 페이지 번호 (가능한 경우)
-    score: Optional[float] = None  # 검색 점수 (가능한 경우)
-
-
-class FileSearchResult(BaseModel):
-    """파일 검색 결과 모델"""
-    file_id: str
-    text: str
-    score: float
-    object_type: str = "file_search_result"
-
-
-class FileQueryRequest(BaseModel):
-    """파일 질의 요청 모델"""
-    query: str
-    vector_store_id: str  # 현재는 file_id로 사용됩니다
-    conversation_history: Optional[List[ChatMessage]] = None  # 대화 히스토리 추가
-    model: Optional[str] = None  # 사용할 모델 추가
-
-
-class FileQueryResponse(BaseModel):
-    """파일 질의 응답 모델"""
-    response: str
-    annotations: Optional[List[FileAnnotation]] = []
-    search_results: Optional[List[Dict[str, Any]]] = None
-    error: Optional[str] = None
-
-
-# 다중 파일 업로드를 위한 새로운 모델들
-class FileUploadResult(BaseModel):
-    """개별 파일 업로드 결과"""
-    filename: str
-    success: bool
-    file_id: Optional[str] = None
-    error: Optional[str] = None
-
-
-class MultiFileUploadResponse(BaseModel):
-    """다중 파일 업로드 응답 모델"""
-    success: bool
-    vector_store_id: Optional[str] = None
-    results: List[FileUploadResult] = []
-    error: Optional[str] = None 
+class Message(Base):
+    __tablename__ = "tb_messages"
+    
+    # 기본 정보
+    id = Column(Integer, primary_key=True)
+    conversation_id = Column(Integer, nullable=False)  # 어떤 대화의 메시지인지
+    user_id = Column(Integer, nullable=False)  # 어떤 사용자의 메시지인지
+    
+    # 메시지 내용
+    question = Column(Text, nullable=False)  # 사용자 질문
+    answer = Column(Text)  # AI 답변 (아직 답변이 없으면 비어있음)
+    
+    # 순서와 상태
+    order = Column(Integer, nullable=False)  # 대화 내 순서 (1, 2, 3...)
+    status = Column(String(20), default='pending')  # pending(대기중), completed(완료), failed(실패)
+    
+    # AI 정보
+    model_used = Column(String(50))  # 사용한 AI 모델
+    question_tokens = Column(Integer, default=0)  # 질문 토큰 수
+    answer_tokens = Column(Integer, default=0)  # 답변 토큰 수
+    
+    # 추가 정보 (JSON 형태로 저장)
+    extra_info = Column(Text)  # 파일 첨부, 웹검색 결과 등
+    
+    # 시간
+    question_time = Column(DateTime, default=func.now())  # 질문한 시간
+    answer_time = Column(DateTime)  # 답변 완료 시간
+    
+    def __repr__(self):
+        return f"<Message(question='{self.question[:30]}...', status='{self.status}')>"

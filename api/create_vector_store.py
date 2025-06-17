@@ -8,7 +8,7 @@ import time
 
 # 현재 디렉토리를 api 디렉토리로 가정하고 상대 경로 설정
 sys.path.append('.')
-from app.config import OPENAI_API_KEY
+from app.core.config import OPENAI_API_KEY
 
 # SSL 인증서 검증 비활성화
 ssl_context = ssl.create_default_context()

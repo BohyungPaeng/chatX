@@ -1,0 +1,112 @@
+# ChatX 프로젝트용 멀티 스테이지 Docker 빌드 (FastAPI 백엔드 + Next.js 프론트엔드)
+
+# 1단계: Next.js 프론트엔드 빌드 환경
+# Node.js 20 Alpine 이미지를 회사 내부 레지스트리에서 사용
+FROM kr-ada-jfp-east-virtual-docker-dev001.artifacts-east.pwc.com/node:20-alpine AS frontend-builder
+
+# 프론트엔드 작업 디렉토리 설정
+WORKDIR /app/frontend
+
+# 의존성 설치를 위한 package 파일들 먼저 복사
+# 이렇게 하면 소스 코드 변경 시에도 의존성 캐시 활용 가능
+COPY package*.json ./
+
+# npm으로 의존성 설치
+# 로컬 환경과 일치시키기 위해 npm 사용
+# --force 옵션으로 플랫폼별 의존성 문제 해결
+RUN npm install --force
+
+# 환경변수 파일 복사 (있는 경우에만)
+COPY .env.dev .env.local 2>/dev/null || echo "No .env.dev found, using environment variables"
+
+# 전체 소스 코드 복사
+COPY . .
+
+# Next.js 애플리케이션 프로덕션 빌드
+# 최적화된 정적 파일과 서버 사이드 렌더링 코드 생성
+RUN npm run build
+
+# 2단계: Python 백엔드 의존성 설치 환경
+# Python 3.11 slim 이미지 사용으로 크기 최적화
+FROM python:3.11-slim AS backend-builder
+
+# 백엔드 작업 디렉토리 설정
+WORKDIR /app/backend
+
+# Python 패키지 컴파일을 위한 시스템 의존성 설치
+# gcc: C 확장이 포함된 Python 패키지 컴파일용
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python 의존성 파일 복사
+COPY api/requirements.txt .
+
+# Python 패키지 설치 (캐시 비활성화로 이미지 크기 절약)
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 3단계: 최종 프로덕션 이미지
+# 실제 실행될 컨테이너 환경 구성
+FROM python:3.11-slim AS production
+
+# 애플리케이션 루트 디렉토리 설정
+WORKDIR /app
+
+# 프론트엔드 서빙을 위한 Node.js 설치
+# 백엔드는 Python, 프론트엔드는 Node.js가 필요하므로 둘 다 설치
+RUN apt-get update && apt-get install -y \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# 2단계에서 설치한 Python 패키지들을 최종 이미지로 복사
+# 멀티 스테이지 빌드로 빌드 도구 없이 실행 환경만 유지
+COPY --from=backend-builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=backend-builder /usr/local/bin /usr/local/bin
+
+# FastAPI 백엔드 소스 코드 복사
+COPY api/ ./api/
+
+# 1단계에서 빌드한 Next.js 정적 파일들 복사
+# .next: 빌드된 Next.js 애플리케이션
+# public: 정적 파일들 (이미지, 아이콘 등)
+# package.json, next.config.mjs: 실행에 필요한 설정 파일들
+# .env.local: 환경변수 파일
+COPY --from=frontend-builder /app/frontend/.next ./frontend/.next
+COPY --from=frontend-builder /app/frontend/public ./frontend/public
+COPY --from=frontend-builder /app/frontend/package*.json ./frontend/
+COPY --from=frontend-builder /app/frontend/next.config.mjs ./frontend/
+COPY --from=frontend-builder /app/frontend/.env.local ./frontend/
+
+# 프론트엔드 프로덕션 의존성만 설치
+# 개발 의존성은 제외하여 이미지 크기 최적화
+WORKDIR /app/frontend
+RUN npm install --only=production --force
+
+# 애플리케이션 시작 스크립트 생성
+WORKDIR /app
+RUN echo '#!/bin/bash\n\
+\n\
+# FastAPI 백엔드를 백그라운드에서 시작\n\
+# api 디렉토리로 이동해서 run.py 실행 (포트 8000)\n\
+cd /app/api && python run.py &\n\
+\n\
+# Next.js 프론트엔드 시작\n\
+# frontend 디렉토리로 이동해서 프로덕션 모드로 실행 (포트 3000)\n\
+cd /app/frontend && npm start\n\
+\n\
+# 컨테이너가 종료되지 않도록 모든 프로세스 대기\n\
+wait' > /app/start.sh
+
+# 시작 스크립트에 실행 권한 부여
+RUN chmod +x /app/start.sh
+
+# 컨테이너에서 사용할 포트 노출
+# 3000: Next.js 프론트엔드
+# 8000: FastAPI 백엔드
+EXPOSE 3000 8000
+
+# 컨테이너 시작 시 두 서비스 모두 실행
+CMD ["/app/start.sh"]

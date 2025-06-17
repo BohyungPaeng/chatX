@@ -165,8 +165,10 @@ http_client = httpx.Client(verify=False)
 ```python
 # 모델 매핑 설정으로 해결
 model_mapping = {
-    "gpt-4o": "gpt-4-1106-preview",
-    # ...
+    "gpt-4.1": "azure.gpt-4.1",
+    "gpt-4o": "azure.gpt-4o",
+    "o4-mini": "azure.gpt-4o-mini",
+    "o3": "azure.o3"
 }
 ```
 
