@@ -6,7 +6,6 @@ Services Layer와 동일한 층위
 
 import re
 
-
 def calculate_language_score(text: str) -> float:
     """
     텍스트의 언어/의미 점수 계산
@@ -47,3 +46,54 @@ def calculate_language_score(text: str) -> float:
     # 최종 점수 계산
     final_score = (meaningful_ratio * 0.6 + pattern_score * 0.4) - weird_penalty
     return max(0.0, min(1.0, final_score))
+
+
+def detect_summary_request(query: str) -> tuple[bool, list[int]]:
+    """요약 요청 감지 - 복수 페이지 지원"""    
+    SUMMARY_KEYWORDS = [
+        '요약', '전체', '개요', '주요 내용', '핵심', '전반적', '종합',
+        'summary', 'summarize', 'overview', 'main points', 'key points', 'overall'
+    ]
+    query_lower = query.lower()
+    is_summary = any(keyword in query_lower for keyword in SUMMARY_KEYWORDS)
+        
+    # 페이지 번호 추출 (다양한 패턴 + 복수 페이지 지원)
+    page_patterns = [
+        r'(\d+)\s*페이지',
+        r'(\d+)\s*쪽',
+        r'(\d+)\s*p\b',
+        r'page\s*(\d+)',
+        r'(\d+)번째\s*페이지'
+    ]
+    
+    page_numbers = []
+    for pattern in page_patterns:
+        matches = re.finditer(pattern, query_lower)
+        for match in matches:
+            page_num = int(match.group(1))
+            if page_num not in page_numbers:
+                page_numbers.append(page_num)
+    
+    # 범위 패턴 지원 (예: "3-7페이지", "page 5 to 10")
+    range_patterns = [
+        r'(\d+)-(\d+)\s*페이지',
+        r'(\d+)에서\s*(\d+)\s*페이지',
+        r'page\s*(\d+)\s*to\s*(\d+)',
+        r'(\d+)부터\s*(\d+)까지'
+    ]
+    
+    for pattern in range_patterns:
+        match = re.search(pattern, query_lower)
+        if match:
+            start_page = int(match.group(1))
+            end_page = int(match.group(2))
+            for page_num in range(start_page, end_page + 1):
+                if page_num not in page_numbers:
+                    page_numbers.append(page_num)
+    
+    page_numbers.sort()  # 정렬
+    
+    # 전체문서 모드: 요약 요청이면서 특정 페이지 지정 없음
+    use_full_document = is_summary and len(page_numbers) == 0
+    
+    return use_full_document, page_numbers
