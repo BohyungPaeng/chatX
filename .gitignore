@@ -25,44 +25,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-
-# Python
+misc/*
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-env/
-new_env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-api/new_env/
-api/env/
-api/venv/
+# api/app/__pycache__/*
+# *.cpython-312.pyc
+.windsurf/rules/chatx.md
+*.pkl.gz
 
-# API temp files
-api/temp/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# Database
-*.db
-*.sqlite
-
-# Uploaded files (업로드된 파일들)
-uploads/
-
-./.claude
+/api/models/
+api/pdf_cache/*.pdf_faiss.index
+api/pdf_cache/*.pdf_faiss_meta.json

@@ -1,0 +1,97 @@
+
+["imagegen"]
+ex_lion = """Close-up image of a majestic lion, showcasing its powerful face with intense golden eyes, a thick mane that flows like waves of sunlit grass, and a strong jawline. 
+The texture of its fur is detailed, with shades of tawny and hints of darker brown, capturing the essence of its wild beauty. The background is softly blurred to emphasize the lion's fierce expression and regal presence.
+"""
+# You can also create your own custom style to generate unique images, from doodles to digital art styles and in different genres like sci-fi, steampunk, or medieval fantasy. You name it—your imagination is the limit!
+# Here are some keyword recommendations to help you create brilliant custom styles.
+
+ex_style = """
+Medium: the material used. Examples include oil painting, pencil sketch, or vintage photography.
+Art Style: the artistic style desired. Examples include impressionism, realism, and surrealism. You can also use the name of a specific famous artist that represents the style you're looking for, such as Rembrandt, Picasso, and Monet.
+Resolution: how sharp and detailed an image is. Examples include highly detailed, ultrarealistic, and soft focus.
+Color: specific shades used to create images that feature a certain color or tone. Examples include light blue, deep red, and mint green.
+Lighting: lighting effects described through keywords like cinematic lighting, dark, moody, etc.
+Additional details: additional descriptors (modifiers) used to enhance an image.
+"""
+
+tmp_assistant = """세련된 AI 어시스턴트 캐릭터 아이콘 — translucent glass-morph rounded micro-chip head, neon-blue & cyan circuitry glowing like flowing data;
+a tiny speech-balloon hovering above the head containing stacked-document pictograms symbolising knowledge comprehension, summarisation and refinement.
+Friendly mini-robot totem body; subtle **{theme}** hinting at the **{title}**;
+Clean white or transparent background, square 1:1 aspect-ratio,
+high-detail vector-style, smooth gradients, minimalistic ultra-clean UI icon, flat-yet-layered depth, cinematic rim-light.
+no realistic human faces, no photorealistic skin texture, no gore, no hate symbols, no offensive gestures, no nudity, no explicit violence.
+"""
+tmp_assitant_e2 =  """세련된 AI 어시스턴트 캐릭터 아이콘 — translucent glass-morph rounded micro-chip head, neon-blue & cyan circuitry glowing like flowing data;
+a tiny speech-balloon hovering above the head containing stacked-document pictograms symbolising knowledge comprehension, summarisation and refinement.
+Friendly mini-robot totem body; subtle **{theme}** hinting at the **{title}**;
+Clean white or transparent background,
+no realistic human faces,
+"""
+
+themes = [
+  "golden tai-chi swirl and wafer-pattern detail",
+  "green leaf circuit motif",
+  "silver gear & blueprint-line motif",
+  "holographic DNA helix motif",
+  "azure globe grid motif",
+  "violet neural-network mesh motif",
+  "copper satellite-dish waveform motif",
+  "teal wave-crest motif",
+  "amber book-spine motif",
+  "crimson shield lattice motif"
+]
+
+
+["rag_basic"]
+# 전체 문서 요약용 프롬프트
+full_document_summary = """당신은 PDF 문서 분석 전문가입니다.
+다음 PDF 문서({filename})의 전체 내용을 바탕으로 사용자의 요청에 정확하고 자세하게 답변해주세요.
+
+📄 전체 문서 내용:
+{full_text}
+
+답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요.
+메타데이터나 바닥글이 아닌 실제 문서의 핵심 내용을 중심으로 답변해주세요."""
+
+# FAISS 검색 결과 기반 프롬프트
+faiss_search_results = """당신은 PDF 문서 분석 전문가입니다.
+다음 PDF 문서({filename})에서 관련성이 높은 구간을 FAISS 임베딩 검색으로 찾았습니다.
+
+질문: {query}
+
+🎯 관련 구간 (유사도 기반 정렬):
+{results_text}
+
+답변 규칙:
+1. **반드시 [1] (Page X) 형식으로 출처를 명시하세요**
+2. **관련 구간에서 핵심 정보를 인용하여 답변하세요**  
+3. **유사도 점수가 높은 순서대로 우선 참조하세요**
+4. **문서에서 찾을 수 없는 내용은 "문서에서 해당 정보를 찾을 수 없습니다"라고 명시하세요**"""
+
+# 검색 실패 시 폴백 프롬프트
+search_fallback = """당신은 PDF 문서 분석 전문가입니다.
+검색 중 오류가 발생하여 전체 문서를 참조합니다.
+
+문서명: {filename}
+질문: {query}
+오류: {error}
+
+전체 문서 내용:
+{full_text}
+
+답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
+
+# 검색 결과 없음 시 프롬프트
+no_search_results = """당신은 PDF 문서 분석 전문가입니다.
+검색 결과가 없어 전체 문서를 참조합니다.
+
+문서명: {filename}
+질문: {query}
+
+전체 문서 내용:
+{full_text}
+
+답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
+
+["system prompt"]

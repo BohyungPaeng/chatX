@@ -13,10 +13,13 @@ import {
   X,
   PlusCircle,
   Search,
-  Globe,
+  Globe
 } from "lucide-react";
-import { ChatMessage } from "@/components/chat-message";
+import { ChatMessage, Message, Citation, PDFPage, PDFProgress } from "@/components/chat-message";
 import { useMobile } from "@/hooks/use-mobile";
+import { useApiTimeout } from "@/hooks/use-timeout";
+import { useImageGeneration } from "@/hooks/use-image-generation";
+import { PDFGreetingMessage } from "@/components/pdf-greeting-message";
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
   DropdownMenu,
@@ -25,6 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
+import { usePDFProcessor } from "@/hooks/use-pdf-processor";
 import { FileUpload } from "@/components/file-upload";
 import {
   Dialog,
@@ -34,18 +38,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { getModels, type Model } from "@/constants/models";
 
 interface ChatAreaProps {
   onMenuClick: () => void;
   sidebarOpen: boolean;
   sidebarCollapsed?: boolean;
 }
-
-// 모델 타입 정의
-type Model = {
-  id: string;
-  name: string;
-};
 
 // Message 타입 정의
 interface Message {
@@ -70,6 +69,14 @@ interface ChatHistory {
   title: string;
   lastMessage: string;
   timestamp: Date;
+  messages: Message[]; // 🆕 이 줄 추가 필요
+}
+
+// 🔧 개선: 파일 상태 인터페이스 추가
+interface FileUploadState {
+  isUploading: boolean;
+  error: string | null;
+  uploadedUrl: string | null;
   messages: Message[]; // 실제 메시지 내용도 저장
 }
 
@@ -181,10 +188,24 @@ export function ChatArea({
   const [chatHistory, setChatHistory] = useState<ChatHistory[]>([]);
   const [currentChatId, setCurrentChatId] = useState<number>(1);
 
-  // 이미지 업로드 관련 상태 추가
+  // 🔧 개선: 파일 상태 통합
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [fileUploadState, setFileUploadState] = useState<FileUploadState>({
+    isUploading: false,
+    error: null,
+    uploadedUrl: null,
+    messages: [],
+  });
+  // 이미지생성
+  const { iconSrc, loading: isIconGenerating, error: iconError, generate: generateIcon, clearIcon } = useImageGeneration();
+
+  // PDF 업로드
+  const { getTimeoutDuration } = useApiTimeout(); 
+  const timeoutDuration = getTimeoutDuration(selectedFile?.type);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
   // 입력창 참조 추가
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -623,14 +644,7 @@ export function ChatArea({
     }
   }, [isStreaming]);
 
-  // 사용 가능한 모델 목록 - 프론트엔드에 고정
-  const models: Model[] = [
-    { id: "gpt-4.1", name: "GPT-4.1" },
-    { id: "gpt-4o", name: "GPT-4o" },
-    { id: "o4-mini", name: "O4-mini" },
-    { id: "o3", name: "O3" },
-  ];
-
+  const models: Model[] = getModels(process.env.NEXT_PUBLIC_MODEL_PRESET);
   // 선택된 모델 상태
   const [selectedModel, setSelectedModel] = useState<Model>(models[0]);
 
@@ -653,12 +667,258 @@ export function ChatArea({
     return !!attachedImage;
   };
 
-  // 파일 선택 핸들러 추가
+  // 1. 상태 추가
+  const [masterSystemPrompt, setMasterSystemPrompt] = useState<string>("");
+
+  // 2. addAutoGreetingMessage 함수 수정
+  const addAutoGreetingMessage = useCallback((filename: string) => {
+    console.log("🎉 Adding auto greeting message for:", filename);
+    
+    const greetingMessage: Message = {
+      id: Date.now(),
+      role: "system",
+      content: "",
+      isAutoMessage: true,
+      customAvatar: iconSrc || undefined,
+      fileName: filename,
+      messageType: "pdf-greeting",
+      onMasterSettingSubmit: (prompt: string) => {
+        // 플래그로 구분
+        if (prompt.startsWith('SYSTEM_PROMPT:')) {
+          const systemPrompt = prompt.replace('SYSTEM_PROMPT:', '');
+          setMasterSystemPrompt(systemPrompt);
+          console.log("📋 마스터 시스템 프롬프트 설정:", systemPrompt);
+        } else {
+          // 추천 질문은 바로 입력창에
+          setInput(prompt);
+          console.log("💡 추천 질문 선택:", prompt);
+        }
+      }
+    };
+
+    setMessages(prev => [...prev, greetingMessage]);
+  }, [iconSrc]);
+
+  // PDF 파일 업로드 시 자동 실행되는 선행 처리 함수 (add-on 개념)
+  // process-pdf-batch API를 호출하여 PDF를 스트리밍으로 처리하고 진행률 표시
+  const processPDFUpload = async (pdfFile: File) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      if (!pdfFile || pdfFile.type !== "application/pdf") {
+        throw new Error("PDF 파일이 필요합니다.");
+      }
+
+        // PDF 진행률 메시지 추가
+      const progressMessageId = messages.length + 1;
+      const progressMessage: Message = {
+        id: progressMessageId,
+        role: "system",
+        content: "",
+        messageType: "pdf-progress",
+        pdfProgress: {
+          fileName: pdfFile.name,
+          totalPages: 0,
+          processedPages: 0,
+          isCompleted: false,
+          isError: false,
+          processingTime: 0
+        }
+      };
+
+        // 결과 뷰어 메시지 추가
+      const resultsMessageId = messages.length + 2;
+      const resultsMessage: Message = {
+        id: resultsMessageId,
+        role: "system",
+        content: "",
+        messageType: "pdf-results",
+        pdfPages: [],
+        pdfProgress: {
+          fileName: pdfFile.name,
+          totalPages: 0,
+          processedPages: 0,
+          isCompleted: false,
+          isError: false
+        }
+      };
+
+      setMessages(prev => [...prev, progressMessage, resultsMessage]);
+      setIsStreaming(true);
+
+        // FormData 생성
+      const formData = new FormData();
+      formData.append("file", pdfFile);
+      formData.append("prompt", "이 PDF 문서를 분석해주세요.");
+      formData.append("model", selectedModel.id);
+      formData.append("force_image_processing", "false");
+      formData.append("stream", "true");
+
+        // API 요청 (process-pdf-batch)
+      const controller = new AbortController();
+      // const timeoutId = setTimeout(() => {
+      //   controller.abort();
+      //   setError("PDF 처리 시간이 초과되었습니다.");
+      //   setIsLoading(false);
+      //   setIsStreaming(false);
+      // }, timeoutDuration);
+
+      const response = await fetch(`${API_URL}/process-pdf-batch`, {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      });
+
+      // clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error("PDF 처리에 실패했습니다.");
+      }
+
+        // 스트리밍 응답 처리 (기존 PDF 로직과 동일)
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let pdfPages: PDFPage[] = [];
+      let processedPages = 0;
+      let isProcessingComplete = false;
+      const startTime = Date.now();
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk;
+
+        const lines = buffer.split(/\r?\n\r?\n/);
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.trim() === "") continue;
+          
+          if (line.includes("[DONE]")) {
+            isProcessingComplete = true;
+            setIsStreaming(false);
+            break;
+          }
+
+          try {
+            const jsonStr = line.replace(/^data: /, "").trim();
+            if (!jsonStr) continue;
+
+            const data = JSON.parse(jsonStr);
+
+            if (data.content && data.content.includes("📄 페이지")) {
+              const pageMatch = data.content.match(/페이지 (\d+)/);
+              if (pageMatch) {
+                const pageNum = parseInt(pageMatch[1]);
+                const contentMatch = data.content.match(/📄 페이지 \d+\n\n(.*?)(?=\n\n---|\n\n##|\n\n📊|$)/s);
+                const pageContent = contentMatch ? contentMatch[1] : data.content;
+                
+                const newPage: PDFPage = {
+                  pageNumber: pageNum,
+                  textContent: pageContent,
+                  success: true
+                };
+                
+                pdfPages.push(newPage);
+                processedPages++;
+                
+                setMessages(currentMessages =>
+                  currentMessages.map(msg => {
+                    if (msg.id === progressMessageId && msg.pdfProgress) {
+                      return {
+                        ...msg,
+                        pdfProgress: {
+                          ...msg.pdfProgress,
+                          processedPages: processedPages,
+                          processingTime: Math.floor((Date.now() - startTime) / 1000)
+                        }
+                      };
+                    }
+                    if (msg.id === resultsMessageId) {
+                      return {
+                        ...msg,
+                        pdfPages: [...pdfPages]
+                      };
+                    }
+                    return msg;
+                  })
+                );
+              }
+            }
+
+            if (data.is_streaming === false) {
+              isProcessingComplete = true;
+              setMessages(currentMessages =>
+                currentMessages.map(msg => {
+                  if (msg.id === progressMessageId && msg.pdfProgress) {
+                    return {
+                      ...msg,
+                      pdfProgress: {
+                        ...msg.pdfProgress,
+                        isCompleted: true,
+                        processingTime: Math.floor((Date.now() - startTime) / 1000)
+                      }
+                    };
+                  }
+                  return msg;
+                })
+              );
+              setIsStreaming(false);
+              break;
+            }
+          } catch (e) {
+            console.error("JSON 파싱 오류:", e, line);
+          }
+        }
+        
+        if (isProcessingComplete) {
+          break;
+        }
+      }
+
+      if (isProcessingComplete && pdfPages.length > 0) {
+        console.log("✅ PDF processing completed, adding greeting message");
+        setTimeout(() => {
+          addAutoGreetingMessage(pdfFile.name);
+        }, 1500);
+      }
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      if (pdfInputRef.current) {
+        pdfInputRef.current.value = "";
+      }
+
+    } catch (err) {
+      console.error("PDF 처리 오류:", err);
+
+      // AbortError는 사용자가 의도적으로 중단한 경우만 처리
+      if (err instanceof Error && err.name === "AbortError") {
+        // timeout에 의한 abort는 에러 표시 안함
+        return;
+      }
+      setError(
+        err instanceof Error
+          ? err.message
+          : "PDF 처리 중 오류가 발생했습니다"
+      );
+      setIsStreaming(false);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  // 파일 선택 핸들러 (이미지 전용) <- 병합전 브랜치에서 이미지/PDF 구분하여 각각 다른 처리 함수로 분기 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
 
     if (file) {
-      // 파일 타입 검증
+      // 파일 타입 검증 (이미지만)
       const validTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
       if (!validTypes.includes(file.type)) {
         setError(
@@ -670,10 +930,10 @@ export function ChatArea({
         return;
       }
 
-      // 파일 크기 검증 (20MB 제한)
-      const maxSize = 20 * 1024 * 1024; // 20MB
+      // 파일 크기 검증 (25MB로 수정) 🔄 현재 브랜치 기준으로 변경
+      const maxSize = 25 * 1024 * 1024; // 25MB (기존: 20MB)
       if (file.size > maxSize) {
-        setError("이미지 크기가 너무 큽니다. 최대 20MB까지 지원합니다.");
+        setError("이미지 크기가 너무 큽니다. 최대 25MB까지 지원합니다."); // 🔄 메시지 수정
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
         }
@@ -706,34 +966,39 @@ export function ChatArea({
     }
   };
 
-  // 이미지 분석 핸들러 수정
   const handleImageAnalysis = async () => {
     try {
       setIsLoading(true);
       setError(null);
-
+      
       // 이미지 파일 또는 URL 확인
       let imageData: string | null = null;
       let imageFile: File | null = null;
-
+      
       // 1. 선택된 파일이 있는 경우
       if (selectedFile) {
-        // 파일 형식 재확인
+        // PDF 지원 확인
         const validTypes = [
           "image/jpeg",
-          "image/png",
+          "image/png", 
           "image/gif",
           "image/webp",
+          "application/pdf"
         ];
         if (!validTypes.includes(selectedFile.type)) {
           throw new Error(
-            "지원되지 않는 이미지 형식입니다. JPEG, PNG, GIF 또는 WEBP 형식만 지원합니다."
+            "지원되지 않는 파일 형식입니다. 이미지 또는 PDF 파일만 지원합니다."
           );
         }
-
+        
         imageFile = selectedFile;
         try {
-          imageData = await fileToBase64(selectedFile);
+          if (selectedFile.type === "application/pdf") {
+            // PDF는 base64 변환하지 않고 파일 그대로 사용
+            imageData = null;
+          } else {
+            imageData = await fileToBase64(selectedFile);
+          }
           console.log(
             `Debug - Selected file: ${selectedFile.name}, type: ${
               selectedFile.type
@@ -741,7 +1006,7 @@ export function ChatArea({
           );
         } catch (e) {
           console.error("File to base64 conversion error:", e);
-          throw new Error("이미지 변환 중 오류가 발생했습니다.");
+          throw new Error("파일 변환 중 오류가 발생했습니다.");
         }
       }
       // 2. 미리보기 URL만 있는 경우
@@ -754,96 +1019,101 @@ export function ChatArea({
         const attachedImage = document.querySelector(
           'img[alt*="Uploaded image"]'
         ) as HTMLImageElement;
-
+        
         if (attachedImage && attachedImage.src) {
           imageData = attachedImage.src;
           console.log(`Debug - Found attached image in DOM`);
         }
       }
-
-      // 이미지가 없으면 에러
-      if (!imageData) {
-        throw new Error("분석할 이미지를 찾을 수 없습니다");
+      
+      // 파일이 없으면 에러
+      if (!selectedFile) {
+        throw new Error("분석할 파일을 찾을 수 없습니다");
       }
-
-      // 이미지 형식 확인
-      if (!imageData.startsWith("data:image/")) {
-        throw new Error(
-          "이미지 형식이 올바르지 않습니다. data:image/ 형식이어야 합니다."
-        );
-      }
-
-      // 이미지 형식 확인
-      const imageFormat = imageData.split(";")[0].split(":")[1].toLowerCase();
-      console.log(`Debug - Image format: ${imageFormat}`);
-
-      // 지원되는 형식인지 확인
-      const supportedFormats = [
-        "image/jpeg",
-        "image/png",
-        "image/gif",
-        "image/webp",
-      ];
-      if (!supportedFormats.includes(imageFormat)) {
-        console.warn(
-          `Warning - Image format ${imageFormat} may not be supported`
-        );
-      }
-
+      
+      // PDF와 이미지 구분 처리
+      const isPdf = selectedFile.type === "application/pdf";
+      const fileTypeName = isPdf ? "PDF 문서" : "이미지";
+      
       // 사용자 메시지 생성
       const userMessage: Message = {
         id: messages.length + 1,
         role: "user",
-        content: input || "이 이미지를 분석해주세요.",
-        imageUrl: imageData,
+        content: input || `이 ${fileTypeName}를 분석해주세요.`,
+        imageUrl: isPdf ? undefined : (imageData || undefined), // PDF는 이미지 URL 없음
       };
-
+      
       // 메시지 목록에 사용자 메시지 추가
       setMessages((prev) => [...prev, userMessage]);
       setInput("");
-
-      // 시스템 메시지 추가 (빈 메시지로 시작)
-      const newMessageId = messages.length + 2;
-      const initialMessage: Message = {
-        id: newMessageId,
-        role: "system",
-        content: "",
-      };
-      setMessages((prev) => [...prev, initialMessage]);
+      
+      let newMessageId: number;
+      
+      // PDF와 이미지에 따른 메시지 구조 분기
+      if (isPdf) {
+        // PDF 질문 시에는 단순한 시스템 응답 메시지만 추가 (chat-with-pdf용)
+        newMessageId = messages.length + 2;
+        const initialMessage: Message = {
+          id: newMessageId,
+          role: "system",
+          content: "",
+        };
+        setMessages((prev) => [...prev, initialMessage]);
+      } else {
+        // 이미지 처리 - 시스템 메시지 추가 (빈 메시지로 시작)
+        newMessageId = messages.length + 2;
+        const initialMessage: Message = {
+          id: newMessageId,
+          role: "system",
+          content: "",
+        };
+        setMessages((prev) => [...prev, initialMessage]);
+      }
+      
       setIsStreaming(true);
-
+      
       // FormData 생성
       const formData = new FormData();
-      formData.append(
-        "prompt",
-        input || "이 이미지에 대해 자세히 설명해주세요."
-      );
-      formData.append("model", selectedModel.id);
-      formData.append("max_tokens", "1000");
-      formData.append("detail", "auto");
-      formData.append("stream", "true"); // 스트리밍 활성화
-
-      // 이전 대화 컨텍스트 추가 (이미지 없는 메시지만)
-      const conversationHistory = messages
-        .filter((msg) => !msg.imageUrl)
-        .map((msg) => ({
-          role: msg.role,
-          content: msg.content,
-        }));
-      formData.append(
-        "conversation_history",
-        JSON.stringify(conversationHistory)
-      );
-
-      // 이미지 추가: 파일이 있으면 파일로, 없으면 base64 문자열로
-      if (imageFile) {
-        console.log("Uploading as file:", imageFile.name, imageFile.type);
-        formData.append("file", imageFile);
+      if (isPdf) {
+        // PDF 질문용 간단한 FormData
+        formData.append("filename", selectedFile.name);
+        formData.append("prompt", input || `이 ${fileTypeName}에 대해 자세히 설명해주세요.`);
+        formData.append("model", selectedModel.id);
+        formData.append("stream", "true");
+        // 🆕 마스터 시스템 프롬프트가 있으면 추가
+        if (masterSystemPrompt) {
+          formData.append("master_system_prompt", masterSystemPrompt);
+          console.log("📋 PDF 질문에 마스터 시스템 프롬프트 적용");
+        }
       } else {
-        console.log("Uploading as base64 image");
-        formData.append("base64_image", imageData);
+        // 이미지용 FormData (기존 로직)
+        formData.append(
+          "prompt",
+          input || `이 ${fileTypeName}에 대해 자세히 설명해주세요.`
+        );
+        formData.append("model", selectedModel.id);
+        formData.append("max_tokens", "1000");
+        formData.append("detail", "auto");
+        formData.append("stream", "true");
+        
+        const conversationHistory = messages
+          .filter((msg) => !msg.imageUrl)
+          .map((msg) => ({
+            role: msg.role,
+            content: msg.content,
+          }));
+        formData.append(
+          "conversation_history",
+          JSON.stringify(conversationHistory)
+        );
+        
+        if (imageFile) {
+          formData.append("file", imageFile);
+        } else if (imageData) {
+          formData.append("base64_image", imageData);
+        }
       }
-
+      
       console.log(`Debug - Sending request with model: ${selectedModel.id}`);
 
       // API 요청
@@ -853,19 +1123,27 @@ export function ChatArea({
         setError("API 요청 시간이 초과되었습니다. 다른 모델을 선택해보세요.");
         setIsLoading(false);
         setIsStreaming(false);
-      }, 30000);
-
+      }, timeoutDuration);
+      
       try {
-        const response = await fetch(`${API_URL}/upload-image`, {
+        // PDF 파일과 이미지 파일을 구분하여 적절한 엔드포인트로 요청
+        const isPdfFile = selectedFile?.type === "application/pdf";
+        const endpoint = isPdfFile ? "/chat-with-pdf" : "/upload-image";
+        
+        console.log(`Sending ${isPdfFile ? 'PDF' : 'image'} to ${endpoint}`);
+        
+        const response = await fetch(`${API_URL}${endpoint}`, {
           method: "POST",
           body: formData,
           signal: controller.signal,
         });
-
+        
         clearTimeout(timeoutId); // 타임아웃 해제
-
+        
         if (!response.ok) {
-          let errorMessage = "이미지 분석 중 오류가 발생했습니다.";
+          let errorMessage = isPdfFile 
+            ? "PDF 분석 중 오류가 발생했습니다."
+            : "이미지 분석 중 오류가 발생했습니다.";
           try {
             const errorData = await response.json();
             console.error("API error response:", errorData);
@@ -878,39 +1156,44 @@ export function ChatArea({
           }
           throw new Error(errorMessage);
         }
-
+        
         // body가 없으면 에러
         if (!response.body) {
           throw new Error("응답 본문이 없습니다.");
         }
-
+        
         // 스트리밍 응답 처리
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let fullContent = "";
         let buffer = "";
+        let streamCompleted = false; // ← 완료 플래그 추가
 
         while (true) {
           const { value, done } = await reader.read();
-          if (done) break;
+          if (done) {
+            console.log("Stream completed by reader done");
+            setIsStreaming(false);
+            break;
+          }
 
-          // 텍스트 디코딩
           const chunk = decoder.decode(value, { stream: true });
           buffer += chunk;
 
-          // 이벤트 스트림 형식 처리 (data: {...}\n\n)
-          const lines = buffer.split("\n\n");
+          const lines = buffer.split(/\r?\n\r?\n/);
           buffer = lines.pop() || "";
 
           for (const line of lines) {
             if (line.trim() === "") continue;
+            
             if (line.includes("[DONE]")) {
+              console.log("Stream completed by [DONE] marker");
               setIsStreaming(false);
-              continue;
+              streamCompleted = true;
+              break;
             }
 
             try {
-              // "data: " 접두사 제거
               const jsonStr = line.replace(/^data: /, "").trim();
               if (!jsonStr) continue;
 
@@ -930,13 +1213,24 @@ export function ChatArea({
               }
 
               if (data.is_streaming === false) {
+                console.log("Stream completed by is_streaming=false");
                 setIsStreaming(false);
+                streamCompleted = true;
+                break;
               }
             } catch (e) {
               console.error("JSON 파싱 오류:", e, line);
             }
           }
+          
+          // 스트림이 완료되면 while 루프도 종료
+          if (streamCompleted) {
+            break;
+          }
         }
+
+        console.log("Final stream state: completed");
+        
       } catch (error) {
         // AbortController에 의한 취소 확인
         if (error instanceof Error && error.name === "AbortError") {
@@ -947,19 +1241,23 @@ export function ChatArea({
         }
         throw error; // 다른 오류는 상위 catch 블록으로 전달
       }
-
-      // 요청이 완료되면 상태 초기화
-      setSelectedFile(null);
-      setPreviewUrl(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
+      
+      // 요청이 완료되면 상태 초기화 - PDF 질문 후에는 파일 상태 유지
+      if (!isPdf) {
+        setSelectedFile(null);
+        setPreviewUrl(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
       }
+      // PDF의 경우 파일 상태 유지하여 연속 질문 가능
+      
     } catch (err) {
-      console.error("이미지 분석 오류:", err);
+      console.error("파일 분석 오류:", err);
       setError(
         err instanceof Error
           ? err.message
-          : "이미지 분석 중 오류가 발생했습니다"
+          : "파일 분석 중 오류가 발생했습니다"
       );
       setIsStreaming(false);
     } finally {
@@ -967,91 +1265,64 @@ export function ChatArea({
     }
   };
 
-  // 파일 업로드 핸들러 (다중 파일 지원)
+  // 파일 업로드 핸들러 (개량된 하이브리드 버전)
   const handleFileUpload = async (files: File[]) => {
     try {
       setIsLoading(true);
       setError(null);
       
-      const formData = new FormData();
-      files.forEach(file => {
-        formData.append("files", file);
-      });
-      
       console.log(`${files.length}개 파일 업로드 시작`);
-      files.forEach(file => {
+      
+      for (const file of files) {
         console.log(`- ${file.name}, 타입: ${file.type}, 크기: ${(file.size / 1024 / 1024).toFixed(2)}MB`);
-      });
-      
-      const response = await fetch(`${API_URL}/upload-multiple-files`, {
-        method: "POST",
-        body: formData
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`서버 오류: ${response.status} ${response.statusText} - ${errorText}`);
-      }
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        console.log(`다중 파일 업로드 성공: ${data.vector_store_id}`);
-        setVectorStoreId(data.vector_store_id);
-        setIsFileMode(true);
         
-        // 성공 메시지 추가
-        const successFiles = data.results.filter((r: any) => r.success);
-        const failedFiles = data.results.filter((r: any) => !r.success);
-        
-        let message = `${successFiles.length}개 파일이 업로드되었습니다:\n`;
-        successFiles.forEach((result: any) => {
-          message += `✓ ${result.filename}\n`;
-        });
-        
-        if (failedFiles.length > 0) {
-          message += `\n실패한 파일 (${failedFiles.length}개):\n`;
-          failedFiles.forEach((result: any) => {
-            message += `✗ ${result.filename}: ${result.error}\n`;
+        // PDF 파일인 경우: 기존 브랜치 로직 사용
+        if (file.type === "application/pdf") {
+          console.log("PDF 파일 감지 - 기존 처리 방식 사용");
+          setSelectedFile(file); // 기존 state도 설정
+          setPreviewUrl(null); // ← 이것만 추가하면 됨
+          
+          // 🆕 아이콘 생성 시작
+          generateIcon(file.name).catch(err => {
+            console.error("Icon generation failed:", err);
           });
+          
+          // 기존 processPDFUpload 로직 호출
+          await processPDFUpload(file);
+        } else {
+          // PDF 외의 파일: 벡터 스토어 처리 (주석 처리)
+          console.log(`${file.type} 파일 - 벡터 스토어 처리 예정 (현재 주석)`);
+          
+          /* TODO: 백엔드 구현 후 활성화
+          const formData = new FormData();
+          formData.append("files", file);
+          
+          const response = await fetch(`${API_URL}/upload-multiple-files`, {
+            method: "POST", 
+            body: formData
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            setVectorStoreId(data.vector_store_id);
+            setIsFileMode(true);
+          }
+          */
+          
+          // 임시 성공 메시지
+          const tempMessage: Message = {
+            id: messages.length + 1,
+            role: "system",
+            content: `${file.name} 파일이 선택되었습니다. (벡터 스토어 기능은 개발 예정)`
+          };
+          setMessages(prev => [...prev, tempMessage]);
         }
-        
-        message += "\n이제 이 파일들에 대해 질문할 수 있습니다.";
-        
-        const newMessage: Message = {
-          id: messages.length + 1,
-          role: "system",
-          content: message
-        };
-        
-        setMessages(prev => [...prev, newMessage]);
-      } else {
-        const errorMsg = data.error || "파일 업로드에 실패했습니다.";
-        setError(errorMsg);
-        console.error("다중 파일 업로드 실패:", errorMsg);
-        
-        // 실패 메시지 추가
-        const newMessage: Message = {
-          id: messages.length + 1,
-          role: "system",
-          content: `파일 업로드 실패: ${errorMsg}`
-        };
-        
-        setMessages(prev => [...prev, newMessage]);
       }
+      
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "파일 업로드 중 오류가 발생했습니다.";
       setError(errorMsg);
       console.error("파일 업로드 오류:", err);
-      
-      // 오류 메시지 추가
-      const newMessage: Message = {
-        id: messages.length + 1,
-        role: "system",
-        content: `파일 업로드 오류: ${errorMsg}`
-      };
-      
-      setMessages(prev => [...prev, newMessage]);
     } finally {
       setIsLoading(false);
     }
@@ -1059,7 +1330,7 @@ export function ChatArea({
 
   // 메시지 전송 함수 수정 - 웹 검색 지원 추가
   const sendMessage = async () => {
-    // 입력 없으면 아무 것도 하지 않음
+    // 입력 없고 이미지도 없으면 아무 것도 하지 않음
     if (!input.trim() && !(selectedFile || previewUrl)) {
       return;
     }
@@ -1067,7 +1338,7 @@ export function ChatArea({
     // 입력 저장 - API 호출 전에 입력값 저장
     const currentInput = input.trim();
 
-    // 이미지가 화면에 표시되고 있는지 확인
+    // 이미지가 화면에 표시되고 있는지 확인 (클라이언트 사이드에서만)
     const hasImage =
       selectedFile ||
       previewUrl ||
@@ -1309,12 +1580,14 @@ export function ChatArea({
 
       // POST 요청으로 스트리밍 데이터 가져오기
       const controller = new AbortController();
+      const isPdfFile = selectedFile && selectedFile.type === "application/pdf";
+
       const timeoutId = setTimeout(() => {
         controller.abort();
-        setError("API 요청 시간이 초과되었습니다. 다른 모델을 선택해보세요.");
+        setError(`${isPdfFile ? 'PDF 처리' : 'API 요청'} 시간이 초과되었습니다. ${isPdfFile ? '큰 PDF 파일이거나 서버가 바쁠 수 있습니다.' : '다른 모델을 선택해보세요.'}`);
         setIsLoading(false);
         setIsStreaming(false);
-      }, 30000);
+      }, timeoutDuration);
 
       try {
         const response = await fetch(`${API_URL}/chat`, {
@@ -1354,7 +1627,7 @@ export function ChatArea({
           buffer += chunk;
 
           // 이벤트 스트림 형식 처리 (data: {...}\n\n)
-          const lines = buffer.split("\n\n");
+          const lines = buffer.split(/\r?\n\r?\n/);
           buffer = lines.pop() || "";
 
           for (const line of lines) {
@@ -1458,12 +1731,20 @@ export function ChatArea({
     fileInputRef.current?.click();
   };
 
+  // PDF 선택 버튼 클릭 핸들러
+  // const handlePdfSelectClick = () => {
+  //   pdfInputRef.current?.click();
+  // };
+
   // 파일 제거 핸들러
   const handleRemoveFile = () => {
     setSelectedFile(null);
     setPreviewUrl(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+    if (pdfInputRef.current) {
+      pdfInputRef.current.value = "";
     }
   };
 
@@ -1568,6 +1849,8 @@ export function ChatArea({
     setWebSearchEnabled(false);
     setIsSearchMode(false);
 
+    clearIcon();
+
     // 새 채팅 ID 저장
     saveCurrentChatId(newChatId);
 
@@ -1576,6 +1859,9 @@ export function ChatArea({
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
+    }
+    if (pdfInputRef.current) {
+      pdfInputRef.current.value = "";
     }
 
     // 채팅 히스토리 업데이트
@@ -1796,16 +2082,38 @@ export function ChatArea({
               message={message}
               isStreaming={isStreaming && message.id === messages.length}
               showImage={isFirstOccurrence}
+              customAvatar={message.customAvatar || (message.role === "system" && iconSrc ? iconSrc : undefined)}
             />
           );
         })}
-        {isLoading && !isStreaming && (
-          <div className="text-center py-2">
-            <span className="text-sm text-gray-500 dark:text-gray-400">
-              AI가 응답 중입니다...
+
+        {/* 아이콘 상태 표시 추가 (미리보기 영역 위에) */}
+        {/* {iconLoading && (
+          <div className="p-2 bg-blue-50 dark:bg-blue-900/20 text-center shrink-0">
+            <span className="text-sm text-blue-600 dark:text-blue-400">
+              🎨 파일 기반 아이콘 생성 중...
             </span>
           </div>
         )}
+
+        {iconError && (
+          <div className="p-2 bg-yellow-50 dark:bg-yellow-900/20 text-center shrink-0">
+            <span className="text-sm text-yellow-600 dark:text-yellow-400">
+              ⚠️ 아이콘 생성 실패: {iconError}
+            </span>
+          </div>
+        )} */}
+
+        {/* AI 응답 중 (스트리밍 포함) */}
+        {(isLoading || isStreaming) && (
+          <div className="p-2 bg-blue-50 dark:bg-blue-900/20 text-center shrink-0">
+            <span className="text-sm text-blue-600 dark:text-blue-400">
+              {isStreaming ? "🤖 AI가 응답 중입니다..." : "⚡ 처리 중입니다..."}
+            </span>
+          </div>
+        )}
+
+        {/* 에러 표시 */}
         {error && (
           <div className="text-center py-3 px-4 my-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
             <span className="text-sm text-red-600 dark:text-red-400 font-medium">

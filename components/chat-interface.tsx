@@ -11,12 +11,28 @@ export default function ChatInterface() {
   const isMobile = useMobile();
 
   return (
-    <div className="flex h-screen bg-white dark:bg-background">
-      {/* Sidebar - hidden on mobile when closed, or when collapsed on desktop */}
+    <div className="flex h-screen bg-white dark:bg-background overflow-hidden">
+      {/* Mobile overlay */}
+      {isMobile && sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-40"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
       <div
-        className={`${sidebarOpen || !isMobile ? "block" : "hidden"} ${
-          isMobile ? "fixed inset-0 z-50" : sidebarCollapsed ? "w-16" : "w-64"
-        } transition-all duration-300 ease-in-out border-r border-gray-200 dark:border-border`}
+        className={`${
+          isMobile 
+            ? sidebarOpen 
+              ? "fixed left-0 top-0 bottom-0 z-50 w-64" 
+              : "hidden"
+            : sidebarOpen || !sidebarCollapsed
+              ? sidebarCollapsed 
+                ? "w-16" 
+                : "w-64"
+              : "w-0"
+        } transition-all duration-300 ease-in-out border-r border-gray-200 dark:border-border flex-shrink-0`}
       >
         <Sidebar
           onClose={() => setSidebarOpen(false)}
@@ -25,8 +41,8 @@ export default function ChatInterface() {
         />
       </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col bg-white dark:bg-background">
+      {/* Main content - 레이아웃 안정화 */}
+      <div className="flex-1 flex flex-col bg-white dark:bg-background min-w-0 overflow-hidden">
         <ChatArea
           onMenuClick={() =>
             isMobile

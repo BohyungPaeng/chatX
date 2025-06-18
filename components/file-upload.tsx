@@ -105,7 +105,7 @@ export function FileUpload({ onFileSelect }: FileUploadProps) {
         {isUploading ? (
           <Loader2 size={18} className="animate-spin" />
         ) : (
-          <Upload size={18} />
+          <FileText size={18} />
         )}
         <span className="sr-only">Upload Files</span>
       </Button>
