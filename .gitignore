@@ -26,6 +26,12 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 misc/*
+
+# Python virtual environments
+venv/
+env/
+ENV/
+.venv/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -37,3 +43,6 @@ __pycache__/
 /api/models/
 api/pdf_cache/*.pdf_faiss.index
 api/pdf_cache/*.pdf_faiss_meta.json
+
+/.claude
+CLAUDE.md
