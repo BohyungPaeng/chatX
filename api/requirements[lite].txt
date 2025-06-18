@@ -26,7 +26,8 @@ pywin32>=306; sys_platform == "win32"  # Windows support (optional)
 
 # ===== RAG Vector indexing =====
 torch==2.4.1+cpu --index-url https://download.pytorch.org/whl/cpu
-sentence-transformers==2.5.1  
+# sentence-transformers==2.5.1  
+transformers>=4.34.0,<5.0
 
 # Note: All Jupyter/IPython related packages have been removed
 # Note: Transitive dependencies (pydantic, starlette, etc.) will be auto-installed
