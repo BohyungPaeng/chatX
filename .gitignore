@@ -46,3 +46,7 @@ api/pdf_cache/*.pdf_faiss_meta.json
 
 /.claude
 CLAUDE.md
+
+# IDE
+.idea/
+.vscode/
