@@ -1567,6 +1567,7 @@ export function ChatArea({
         temperature: 0.7,
         max_tokens: 1000,
         stream: true,
+        conversation_id: currentChatId,
       };
 
       // 빈 메시지로 시스템 응답 추가
@@ -1643,7 +1644,7 @@ export function ChatArea({
               if (!jsonStr) continue;
 
               const data = JSON.parse(jsonStr);
-
+              if (data.conversation_id && data.conversation_id !== currentChatId) {  setCurrentChatId(data.conversation_id);}
               if (data.content) {
                 fullContent += data.content;
 
