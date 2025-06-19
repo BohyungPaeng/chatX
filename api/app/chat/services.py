@@ -1,5 +1,3 @@
-# 💬 채팅 관련 서비스 - 대화와 메시지를 관리합니다
-
 import json
 import time
 from datetime import datetime
@@ -111,6 +109,7 @@ class ChatService:
             # 3️⃣ 스트리밍 응답 생성기 생성
             async def streaming_generator():
                 collected_content = []
+                usage = None
                 
                 try:
                     # AI 스트리밍 호출
@@ -124,17 +123,26 @@ class ChatService:
                             
                             # 실시간 청크 전송
                             yield f"data: {json.dumps({'content': content, 'is_streaming': True, 'conversation_id': conversation_id, 'message_id': message.id})}\n\n"
+                        
+                        # 마지막 청크에서 정확한 토큰 사용량 정보 수집
+                        if hasattr(chunk, 'usage') and chunk.usage is not None:
+                            usage = {
+                                "prompt_tokens": chunk.usage.prompt_tokens,
+                                "completion_tokens": chunk.usage.completion_tokens,
+                                "total_tokens": chunk.usage.total_tokens
+                            }
                     
                     # 전체 응답 조합
                     full_response = "".join(collected_content)
                     
-                    # 사용량 정보 (추정치)
-                    usage = {
-                        "prompt_tokens": len(user_message) // 4,  # 단순 추정
-                        "completion_tokens": len(full_response) // 4,
-                        "total_tokens": 0
-                    }
-                    usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+                    # 토큰 정보가 없는 경우에만 추정치 사용
+                    if usage is None:
+                        usage = {
+                            "prompt_tokens": len(user_message) // 4,  # 단순 추정 (fallback)
+                            "completion_tokens": len(full_response) // 4,
+                            "total_tokens": 0
+                        }
+                        usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
                     
                     # 4️⃣ AI 답변을 DB에 저장
                     ai_response = {
@@ -168,64 +176,64 @@ class ChatService:
                 await self._mark_message_failed(message.id, str(e))
             raise Exception(f"스트리밍 채팅 처리 중 오류가 발생했습니다: {str(e)}")
     
-    async def process_chat_request(self, user_id: int, conversation_id: int, 
-                                 user_message: str, model: str = "gpt-4") -> Tuple[Message, str]:
-        """
-        💬 멀티턴 채팅 요청 처리하기
-        
-        Args:
-            user_id: 사용자 ID
-            conversation_id: 대화방 ID  
-            user_message: 사용자 질문
-            model: 사용할 AI 모델
-            
-        Returns:
-            Tuple[Message, str]: (저장된 메시지 객체, AI 답변)
-        """
-        start_time = time.time()
-        logger.info(f"🕐 [시작] 멀티턴 채팅 처리 시작 - 사용자: {user_id}, 모델: {model}")
-        
-        try:
-            # 1️⃣ 사용자 질문을 DB에 저장
-            step1_start = time.time()
-            message = await self._save_user_question(conversation_id, user_id, user_message)
-            step1_time = time.time() - step1_start
-            logger.info(f"⏱️  [1단계] 사용자 질문 저장 완료: {step1_time:.2f}초")
-            
-            # 2️⃣ 대화 컨텍스트 조회 및 AI 호출 (멀티턴 지원)
-            step2_start = time.time()
-            context = await self.get_conversation_context(conversation_id)
-            # 현재 사용자 메시지 추가
-            context.append({"role": "user", "content": user_message})
-            logger.info(f"🤖 [AI 호출 시작] 모델: {model} → 매핑: {MODEL_MAPPING.get(model, model)}, 컨텍스트: {len(context)}개 메시지")
-            ai_response = await self._ask_openai(context, model)
-            step2_time = time.time() - step2_start
-            logger.info(f"⏱️  [2단계] AI 응답 완료: {step2_time:.2f}초, 응답 길이: {len(ai_response['content'])}자")
-            
-            # 3️⃣ AI 답변을 DB에 저장
-            step3_start = time.time()
-            logger.info(f"🔄 AI 답변 저장 중... 내용: {ai_response['content'][:100]}...")
-            await self._save_ai_answer(message, ai_response, model)
-            step3_time = time.time() - step3_start
-            logger.info(f"⏱️  [3단계] AI 답변 저장 완료: {step3_time:.2f}초")
-            
-            # 4️⃣ 대화방 통계 업데이트
-            step4_start = time.time()
-            await self._update_conversation_stats(conversation_id, ai_response.get("usage", {}))
-            step4_time = time.time() - step4_start
-            logger.info(f"⏱️  [4단계] 대화방 통계 업데이트 완료: {step4_time:.2f}초")
-            
-            total_time = time.time() - start_time
-            logger.info(f"🎉 [완료] 전체 처리 시간: {total_time:.2f}초, message_id={message.id}")
-            logger.info(f"📊 시간 분석: DB저장({step1_time:.2f}s) + AI호출({step2_time:.2f}s) + 답변저장({step3_time:.2f}s) + 통계({step4_time:.2f}s)")
-            
-            return message, ai_response["content"]
-            
-        except Exception as e:
-            # ❌ 실패 처리
-            if 'message' in locals():
-                await self._mark_message_failed(message.id, str(e))
-            raise Exception(f"채팅 처리 중 오류가 발생했습니다: {str(e)}")
+    # async def process_chat_request(self, user_id: int, conversation_id: int,
+    #                              user_message: str, model: str = "gpt-4") -> Tuple[Message, str]:
+    #     """
+    #     💬 멀티턴 채팅 요청 처리하기
+    #
+    #     Args:
+    #         user_id: 사용자 ID
+    #         conversation_id: 대화방 ID
+    #         user_message: 사용자 질문
+    #         model: 사용할 AI 모델
+    #
+    #     Returns:
+    #         Tuple[Message, str]: (저장된 메시지 객체, AI 답변)
+    #     """
+    #     start_time = time.time()
+    #     logger.info(f"🕐 [시작] 멀티턴 채팅 처리 시작 - 사용자: {user_id}, 모델: {model}")
+    #
+    #     try:
+    #         # 1️⃣ 사용자 질문을 DB에 저장
+    #         step1_start = time.time()
+    #         message = await self._save_user_question(conversation_id, user_id, user_message)
+    #         step1_time = time.time() - step1_start
+    #         logger.info(f"⏱️  [1단계] 사용자 질문 저장 완료: {step1_time:.2f}초")
+    #
+    #         # 2️⃣ 대화 컨텍스트 조회 및 AI 호출 (멀티턴 지원)
+    #         step2_start = time.time()
+    #         context = await self.get_conversation_context(conversation_id)
+    #         # 현재 사용자 메시지 추가
+    #         context.append({"role": "user", "content": user_message})
+    #         logger.info(f"🤖 [AI 호출 시작] 모델: {model} → 매핑: {MODEL_MAPPING.get(model, model)}, 컨텍스트: {len(context)}개 메시지")
+    #         ai_response = await self._ask_openai(context, model)
+    #         step2_time = time.time() - step2_start
+    #         logger.info(f"⏱️  [2단계] AI 응답 완료: {step2_time:.2f}초, 응답 길이: {len(ai_response['content'])}자")
+    #
+    #         # 3️⃣ AI 답변을 DB에 저장
+    #         step3_start = time.time()
+    #         logger.info(f"🔄 AI 답변 저장 중... 내용: {ai_response['content'][:100]}...")
+    #         await self._save_ai_answer(message, ai_response, model)
+    #         step3_time = time.time() - step3_start
+    #         logger.info(f"⏱️  [3단계] AI 답변 저장 완료: {step3_time:.2f}초")
+    #
+    #         # 4️⃣ 대화방 통계 업데이트
+    #         step4_start = time.time()
+    #         await self._update_conversation_stats(conversation_id, ai_response.get("usage", {}))
+    #         step4_time = time.time() - step4_start
+    #         logger.info(f"⏱️  [4단계] 대화방 통계 업데이트 완료: {step4_time:.2f}초")
+    #
+    #         total_time = time.time() - start_time
+    #         logger.info(f"🎉 [완료] 전체 처리 시간: {total_time:.2f}초, message_id={message.id}")
+    #         logger.info(f"📊 시간 분석: DB저장({step1_time:.2f}s) + AI호출({step2_time:.2f}s) + 답변저장({step3_time:.2f}s) + 통계({step4_time:.2f}s)")
+    #
+    #         return message, ai_response["content"]
+    #
+    #     except Exception as e:
+    #         # ❌ 실패 처리
+    #         if 'message' in locals():
+    #             await self._mark_message_failed(message.id, str(e))
+    #         raise Exception(f"채팅 처리 중 오류가 발생했습니다: {str(e)}")
     
     async def _save_user_question(self, conversation_id: int, user_id: int, question: str) -> Message:
         """📝 사용자 질문 저장하기"""
@@ -248,29 +256,29 @@ class ChatService:
         message = Message(**message_data)
         return await save_to_db(self.db, message)
     
-    async def _ask_openai(self, messages: List[dict], model: str = "gpt-4.1") -> dict:
-        """🤖 OpenAI API 호출하기 (비스트리밍)"""
-        # 모델 매핑 적용
-        mapped_model = MODEL_MAPPING.get(model, model)
-        
-        # 🔍 웹 검색 관련 메시지 필터링 (이전 검색 결과 제거)
-        filtered_messages = self._filter_messages(messages)
-        
-        response = self.openai_client.chat.completions.create(
-            model=mapped_model,
-            messages=filtered_messages,
-            temperature=0.7,
-            max_tokens=1000
-        )
-        
-        return {
-            "content": response.choices[0].message.content,
-            "usage": {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens
-            }
-        }
+    # async def _ask_openai(self, messages: List[dict], model: str = "gpt-4.1") -> dict:
+    #     """🤖 OpenAI API 호출하기 (비스트리밍)"""
+    #     # 모델 매핑 적용
+    #     mapped_model = MODEL_MAPPING.get(model, model)
+    #
+    #     # 🔍 웹 검색 관련 메시지 필터링 (이전 검색 결과 제거)
+    #     filtered_messages = self._filter_messages(messages)
+    #
+    #     response = self.openai_client.chat.completions.create(
+    #         model=mapped_model,
+    #         messages=filtered_messages,
+    #         temperature=0.7,
+    #         max_tokens=1000
+    #     )
+    #
+    #     return {
+    #         "content": response.choices[0].message.content,
+    #         "usage": {
+    #             "prompt_tokens": response.usage.prompt_tokens,
+    #             "completion_tokens": response.usage.completion_tokens,
+    #             "total_tokens": response.usage.total_tokens
+    #         }
+    #     }
     
     async def _ask_openai_streaming(self, messages: List[dict], model: str = "gpt-4.1"):
         """🚀 OpenAI API 스트리밍 호출하기"""
