@@ -20,6 +20,7 @@ class SearchResult:
     score: float
     citation: str
 
+_global_embedding_models = {}
 class FaissIndex:
     """FAISS 기반 벡터 검색 인덱스"""
     
@@ -36,6 +37,12 @@ class FaissIndex:
         self.embedding_dim = None
         
     def _load_embedding_model(self, model_input: str) -> Any:
+        # """지연 로딩: 실제 필요할 때만 모델 로드"""
+        # global _global_embedding_models
+        
+        # if self.model_name in _global_embedding_models:
+        #     print(f"🔄 전역 캐시에서 모델 재사용: {self.model_name}")
+        #     return _global_embedding_models[self.model_name]
 
         if not FLAG_LIGHTWEIGHT:
             # 1순위: 캐시, 2순위: 실패시 온라인 시도
@@ -249,7 +256,7 @@ class FaissIndex:
                 meta_info = json.load(f)
             
             # 청크 데이터 로드
-            chunks_data = pdf_cache_manager.load(f"{filename}_faiss_chunks")
+            chunks_data = pdf_cache_manager.load(f"{filename}_faiss_chunks", verbose=True)
             if not chunks_data or 'chunks' not in chunks_data:
                 return False
             
@@ -279,42 +286,33 @@ class FaissIndex:
             'is_trained': self.index is not None
         }
 
+# 모듈 레벨 인스턴스 (필요할 때만 생성)
+_global_faiss_instance = None
 
-# 유틸리티 함수
 def create_faiss_index_from_cache(filename: str, 
                                   model_name: str = "intfloat/multilingual-e5-base") -> FaissIndex:
-    """
-    캐시된 PDF에서 FAISS 인덱스 생성
+    """캐시된 PDF에서 FAISS 인덱스 생성 (전역 인스턴스 사용)"""
+    global _global_faiss_instance
     
-    Args:
-        filename: PDF 파일명
-        model_name: 사용할 임베딩 모델명
-        
-    Returns:
-        FaissIndex: 구축된 인덱스
-    """
-    from .doc_chunker import DocumentChunker
+    # 전역 인스턴스 가져오기 (필요시에만 생성)
+    if _global_faiss_instance is None or _global_faiss_instance.model_name != model_name:
+        print(f"🔧 FaissIndex 인스턴스 생성: {model_name}")
+        _global_faiss_instance = FaissIndex(model_name)  # 모델 로드 포함
     
-    # 기존 FAISS 캐시 확인
-    faiss_index = FaissIndex(model_name)
-    if faiss_index.load_from_cache(filename):
+    # 기존 로직 그대로
+    if _global_faiss_instance.load_from_cache(filename):
         print(f"✅ FAISS index loaded from cache: {filename}")
-        return faiss_index
+        return _global_faiss_instance
     
-    # 캐시에서 청킹 수행
-    try:
-        chunker = DocumentChunker(chunking_method='cosine')
-        chunks = chunker.chunk_document(filename)
-        
-        if chunks:
-            success = faiss_index.build_from_chunks(chunks, filename)
-            if success:
-                print(f"✅ New FAISS index created: {filename}")
-                return faiss_index
-        
-        print(f"❌ Failed to create FAISS index: {filename}")
-        return None
-        
-    except Exception as e:
-        print(f"❌ Error creating FAISS index: {e}")
-        return None
+    # 캐시 없으면 새로 생성 (기존 로직)
+    from .doc_chunker import DocumentChunker
+    chunker = DocumentChunker(chunking_method='cosine')
+    chunks = chunker.chunk_document(filename)
+    
+    if chunks:
+        success = _global_faiss_instance.build_from_chunks(chunks, filename)
+        if success:
+            print(f"✅ New FAISS index created: {filename}")
+            return _global_faiss_instance
+    
+    return None

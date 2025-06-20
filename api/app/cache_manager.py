@@ -11,6 +11,7 @@ class PDFCacheManager:
     
     def __init__(self, cache_dir: str = "pdf_cache"):
         self.cache_dir = Path(cache_dir)
+        print(self.cache_dir, " is loaded")
         self.cache_dir.mkdir(exist_ok=True)
         self.memory_cache = {}  # 메모리 캐시
     
@@ -51,7 +52,7 @@ class PDFCacheManager:
             print(f"⚠️ 캐시 저장 실패: {filename} - {e}")
             return False
     
-    def load(self, filename: str) -> Optional[dict]:
+    def load(self, filename: str, verbose:bool = False) -> Optional[dict]:
         """
         캐시 로드 (메모리 우선, 없으면 파일에서)
         
@@ -63,7 +64,8 @@ class PDFCacheManager:
         """
         # 1. 메모리 캐시 확인
         if filename in self.memory_cache:
-            print(f"📝 메모리에서 캐시 로드: {filename}")
+            if verbose:
+                print(f"📝 메모리에서 캐시 로드: {filename}")
             return self.memory_cache[filename]
         
         # 2. 파일 캐시 확인
@@ -205,3 +207,9 @@ def build_page_content_map(filename: str) -> dict[int, str]:
         print(f"❌ 페이지 맵 구축 실패: {e}")
     
     return page_content_map
+
+
+
+if __name__ == "__main__":
+    map = build_page_content_map("Guide to Taiwan's semiconductor industry 3.pdf")
+    print(map)

@@ -12,7 +12,7 @@ import json
 router = APIRouter()
 
 from .pdf_processor import PDFBatchProcessor
-from .config import PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT, PDF_MAX_FILE_SIZE
+from .config import PDF_BATCH_SIZE, PDF_PROCESSING_TIMEOUT, PDF_MAX_FILE_SIZE, FLAG_EXPERIMENT
 from .cache_manager import pdf_cache_manager  # 직접 import
 class GlobalCacheAdapter:
     def __contains__(self, filename):
@@ -57,18 +57,19 @@ def process_pdf_in_batches(
                 status_code=400, 
                 detail=f"파일 크기가 너무 큽니다. 최대 {PDF_MAX_FILE_SIZE // (1024*1024)}MB까지 지원합니다."
             )
-        # force_image_processing = False
-        # # 1. 캐시 체크 (force 옵션이 아닐 때만)
-        # if not force_image_processing and pdf_cache_manager.exists(file.filename):
-        #     print(f"✅ 캐시 hit: {file.filename}")
-        #     cache_data = pdf_cache_manager.load(file.filename)
-        #     return {
-        #         "status": "cached",
-        #         "filename": file.filename,
-        #         "processing_method": cache_data.get("processing_method", "unknown"),
-        #         "cached": True,
-        #         "total_pages": cache_data.get("total_pages", 0)
-        #     } #FIXME: stream=True라도, False일때처럼한번에 반환하여 프론트 연동이 되지않음 차후 ui작업 시 한번에 처리
+        force_image_processing = False
+        #TODO: UI에서 readable이어도 필요시 force image를 True로 켤수있는 선택지를 먼저 물어봐야
+        # 1. 캐시 체크 (force 옵션이 아닐 때만)
+        if not force_image_processing and pdf_cache_manager.exists(file.filename):
+            print(f"✅ 캐시 hit: {file.filename}")
+            cache_data = pdf_cache_manager.load(file.filename)
+            return {
+                "status": "cached",
+                "filename": file.filename,
+                "processing_method": cache_data.get("processing_method", "unknown"),
+                "cached": True,
+                "total_pages": cache_data.get("total_pages", 0)
+            } #FIXME: stream=True라도, False일때처럼한번에 반환하여 프론트 연동이 되지않음 차후 ui작업 시 한번에 처리
 
         # 파일 내용 읽기
         pdf_content = file.file.read()
@@ -314,8 +315,8 @@ async def chat_with_pdf(
     """
     글로벌 캐시에서 PDF 텍스트를 가져와서 채팅 응답 생성
     """
-    from .rag_engine import SearchIndex, search_and_generate_system_message, search_with_faiss_engine
-
+    from .rag_engine import SearchIndex, search_and_generate_system_message, search_with_faiss_engine, _ensemble_faiss_tfidf    
+    import time
     try:
         print(f"=== Chat with PDF Started ===")
         print(f"Filename: {filename}, Model: {model}, Stream: {stream}")
@@ -327,25 +328,60 @@ async def chat_with_pdf(
         extracted_text = get_combined_text_from_cache(filename)
         print(f"Found cached text length: {len(extracted_text)}")
 
-        chunks = GLOBAL_PDF_CACHE[filename].get('semantic_chunks', [])
-        if not chunks:
-            # 🔧 청킹 시도 - 실패해도 기존 방식으로 진행
-            chunks = await chunk_pdf_document(filename)
-            GLOBAL_PDF_CACHE[filename]['semantic_chunks'] = chunks
+        start_time = time.time()
+        system_message, search_results = search_with_faiss_engine(filename, prompt, top_k=5)
+        
+        search_time_ms = (time.time() - start_time) * 1000
+        print(search_time_ms, " 검색에 소요되었습니다")
+        
+        # from .rag_dashboard_gradio import GradioRAGDashboard
+        # dashboard = GradioRAGDashboard()
+        # dashboard.launch()
+        # dashboard._create_dashboard(prompt, search_results, search_time_ms)
+        # 🔥 Phoenix 자동 모니터링 (1줄 추가)
+        
+        # from .rag_monitor import auto_monitor_chat
+        from .rag_monitory_phoenix import auto_monitor_chat
+        auto_monitor_chat(prompt, filename, search_results, search_time_ms)
+        
+        # from .rag_monitory_phoenix import get_phoenix_monitor
+        # get_phoenix_monitor().create_retrieval_span(prompt, search_results, search_time_ms)
+        
+        tfidf_weight = 0.3
+        K = 5
+        if tfidf_weight > 0.0 or FLAG_EXPERIMENT:
+            
+            chunks = GLOBAL_PDF_CACHE[filename].get('semantic_chunks', [])
+            if not chunks:
+                # 🔧 청킹 시도 - 실패해도 기존 방식으로 진행
+                chunks = await chunk_pdf_document(filename)
+                GLOBAL_PDF_CACHE[filename]['semantic_chunks'] = chunks
 
-        print(f"Using cached {len(chunks)} chunks")
-        faiss=True
-        if faiss:
-            system_message, search_results = search_with_faiss_engine(filename, prompt, top_k=5)
-        else:
+            print(f"Using cached {len(chunks)} chunks")
             # 🆕 통합 검색 및 시스템 메시지 생성 (페이지 컨텍스트 모드)
             search_index = SearchIndex(chunks)
-            system_message, search_results = search_and_generate_system_message(
-                search_index, prompt, filename, use_page_context=True, top_k=5
-            )
+            _, tfidf_results = search_and_generate_system_message(search_index, prompt, filename, use_page_context=True, top_k=K)
+            auto_monitor_chat(prompt, filename, tfidf_results, search_time_ms, method = "retrieve/tfidf")
+                
+            if tfidf_results:
+                # 앙상블 수행
+                search_results = _ensemble_faiss_tfidf(search_results, tfidf_results, tfidf_weight, K)
+                print(f"✅ FAISS + TF-IDF 앙상블 완료: {len(search_results)}개 최종 결과")
+            else:
+                print("⚠️ TF-IDF 결과 없음, FAISS만 사용")
+                search_results = search_results[:K]
         # 마스터 시스템 프롬프트가 있으면 병합
         if master_system_prompt:
             system_message = f"{master_system_prompt}\n\n{system_message}"
+            
+    #         # 시스템 메시지 생성
+    #         system_message = f"""당신은 PDF 문서 분석 전문가입니다. 
+    # 다음 PDF 문서({filename})의 내용을 바탕으로 사용자의 질문에 정확하고 자세하게 답변해주세요.
+
+    # 문서 내용:
+    # {extracted_text}
+
+    # 답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""            
             print("설정된 SYSTEM_PROMPT:", system_message)
 
         if search_results:
@@ -354,15 +390,6 @@ async def chat_with_pdf(
                 print(f"  {result.citation}: {result.score:.3f} - {result.chunk.content[:100]}...")
         else:
             print("⚠️ 검색 결과 없음, 전체 문서 사용")
-        
-#         # 시스템 메시지 생성
-#         system_message = f"""당신은 PDF 문서 분석 전문가입니다. 
-# 다음 PDF 문서({filename})의 내용을 바탕으로 사용자의 질문에 정확하고 자세하게 답변해주세요.
-
-# 문서 내용:
-# {extracted_text}
-
-# 답변 시 문서에서 직접 확인할 수 있는 내용을 구체적으로 인용하고, 페이지 번호를 참조해주세요."""
         
         # ChatRequest 생성
         chat_request = ChatRequest(
@@ -375,7 +402,6 @@ async def chat_with_pdf(
             max_tokens=4092,
             stream=stream
         )
-        
         if stream:
             # 스트리밍 응답
             stream_iterator = await generate_streaming_response(chat_request)
@@ -390,7 +416,12 @@ async def chat_with_pdf(
             )
         else:
             # 일반 응답
+            start_time = time.time()
+            
             response = await generate_chat_response(chat_request)
+            print(f"🔍 (DEBUG for Non-streaming) PWC Response type: {type(response)}")
+            print(f"🔍 PWC Response content: {response}")
+            auto_monitor_chat(prompt, filename, search_results, search_time_ms = (time.time() - start_time) * 1000, ai_response=response.response)
             return response
             
     except HTTPException:

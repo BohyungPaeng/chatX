@@ -458,31 +458,65 @@ def search_with_faiss_engine(filename: str, query: str, top_k: int = 5) -> Tuple
         system_message = template.format(filename=filename, query=query, error=str(e), full_text=full_text)
         
         return system_message, []
-def search_with_hybrid_engine(filename: str, query: str, top_k: int = 5, 
-                             use_faiss: bool = True, use_tfidf: bool = False) -> Tuple[str, List]:
+
+
+def _ensemble_faiss_tfidf(faiss_results: List, tfidf_results: List, tfidf_weight: float, top_k: int) -> List:
     """
-    하이브리드 검색 엔진 (FAISS + TF-IDF 선택 가능)
+    FAISS와 TF-IDF 결과를 앙상블
     
     Args:
-        filename: PDF 파일명
-        query: 사용자 쿼리 
-        top_k: 반환할 검색 결과 수
-        use_faiss: FAISS 검색 사용 여부
-        use_tfidf: TF-IDF 검색 사용 여부 (기존 방식)
+        faiss_results: FAISS 검색 결과
+        tfidf_results: TF-IDF 검색 결과
+        tfidf_weight: TF-IDF 가중치 (FAISS 가중치는 1 - tfidf_weight)
+        top_k: 최종 반환할 결과 수
         
     Returns:
-        Tuple[str, List]: (시스템 메시지, 검색 결과)
+        List: 앙상블된 최종 검색 결과
     """
-    if use_faiss:
-        return search_with_faiss_engine(filename, query, top_k)
-    elif use_tfidf:
-        from .doc_chunker import DocumentChunker
-        chunks = DocumentChunker('cosine').chunk_document(filename)
-        search_index = SearchIndex(chunks)
-        return search_and_generate_system_message(search_index, query, filename, use_page_context=True, top_k=top_k)
-    else:
-        full_text = get_combined_text_from_cache_safe(filename)
+    faiss_weight = 1.0 - tfidf_weight
+    
+    # 점수 맵 생성
+    chunk_scores = {}  # chunk_id -> 최종 점수
+    chunk_objects = {}  # chunk_id -> SearchResult 객체
+    
+    # FAISS 결과 처리 (점수 그대로 사용)
+    for result in faiss_results:
+        chunk_id = result.chunk.id
+        chunk_scores[chunk_id] = result.score * faiss_weight
+        chunk_objects[chunk_id] = result
+    
+    # TF-IDF 결과 처리 (정규화 필요)
+    if tfidf_results:
+        # TF-IDF 점수 정규화 (0-1 범위로)
+        max_tfidf_score = max(r.score for r in tfidf_results)
         
-        template = prompts.get("full_document_summary", "전체 문서:\n{full_text}")
-        system_message = template.format(filename=filename, full_text=full_text)
-        return system_message, []
+        for result in tfidf_results:
+            chunk_id = result.chunk.id
+            normalized_score = result.score / max_tfidf_score if max_tfidf_score > 0 else 0
+            
+            if chunk_id in chunk_scores:
+                # 이미 FAISS에 있으면 TF-IDF 점수 추가
+                chunk_scores[chunk_id] += normalized_score * tfidf_weight
+            else:
+                # TF-IDF만 있으면 TF-IDF 점수만
+                chunk_scores[chunk_id] = normalized_score * tfidf_weight
+                chunk_objects[chunk_id] = result
+    
+    # 점수순 정렬
+    sorted_chunks = sorted(chunk_scores.items(), key=lambda x: x[1], reverse=True)
+    
+    # 최종 결과 생성
+    final_results = []
+    for i, (chunk_id, final_score) in enumerate(sorted_chunks[:top_k]):
+        if chunk_id in chunk_objects:
+            original_result = chunk_objects[chunk_id]
+            
+            # 새로운 SearchResult 생성 (앙상블 점수와 새 citation으로)
+            ensemble_result = SearchResult(
+                chunk=original_result.chunk,
+                score=final_score,
+                citation=f"[{i+1}] (Page {original_result.chunk.page_number})"
+            )
+            final_results.append(ensemble_result)
+    
+    return final_results

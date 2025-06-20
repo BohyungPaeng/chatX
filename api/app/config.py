@@ -19,6 +19,7 @@ PORT = int(os.getenv("PORT", "8000"))
 GPT_MODEL = os.getenv("GPT_MODEL", "gpt-4-1106-preview")
 IMAGE_GEN_MODEL = os.getenv("IMAGE_GEN_MODEL", "dall-e-3")
 FLAG_LIGHTWEIGHT = not IMAGE_GEN_MODEL.startswith("vertex_ai.")
+FLAG_EXPERIMENT = True
 
 # 🔧 타임아웃 관련 환경변수 추가
 PDF_PROCESSING_TIMEOUT = int(os.getenv("PDF_PROCESSING_TIMEOUT", "30"))

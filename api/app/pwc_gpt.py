@@ -144,10 +144,8 @@ class AsyncPwCGPTModel:
             return 0
         
         message_lengths = [get_content_length(message) for message in messages]
-        print("###MESSAGE LENGTH:", message_lengths)
-        
-        
-        print("###MESSAGE LENGTH:", [len(message["content"]) for message in messages])
+        print("(AsyncPWCGPTModel.run)###MESSAGE LENGTH:", message_lengths)       
+        # print("###MESSAGE LENGTH:", [len(message["content"]) for message in messages])
                 
         try:
             async with aiohttp.ClientSession() as session:
@@ -323,7 +321,7 @@ class AsyncPwCGPTModel:
         
         body.update(kwargs)
         
-        print("###MESSAGE LENGTH:", [len(message["content"]) for message in messages])
+        print("(AsyncPWCGPTModel.run_stream)###MESSAGE LENGTH:", [len(message["content"]) for message in messages])
         
         try:
             async with aiohttp.ClientSession() as session:
