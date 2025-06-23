@@ -67,26 +67,32 @@ def get_latest_migration_version():
         logger.warning(f"⚠️ 마이그레이션 버전 감지 실패: {e}")
         return "003"  # fallback
 
-async def run_migrations():
+def run_migrations():
     """서버 시작시 Alembic 마이그레이션 자동 실행"""
     try:
-        from alembic.config import Config
-        from alembic import command
+        import subprocess
+        import sys
         import os
         
-        # alembic.ini 파일 경로 설정
-        alembic_cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "alembic.ini")
+        # subprocess로 alembic 명령어 실행 (경고 방지)
+        api_dir = os.path.dirname(os.path.dirname(__file__))
         
-        if os.path.exists(alembic_cfg_path):
-            alembic_cfg = Config(alembic_cfg_path)
-            command.upgrade(alembic_cfg, "head")
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=api_dir,
+            capture_output=True,
+            text=True,
+            encoding='utf-8'
+        )
+        
+        if result.returncode == 0:
             logger.info("✅ 데이터베이스 마이그레이션 자동 적용 완료")
         else:
-            logger.warning("⚠️ alembic.ini 파일을 찾을 수 없습니다. 마이그레이션을 건너뜁니다.")
+            logger.error(f"❌ 마이그레이션 실패: {result.stderr}")
+            logger.warning("⚠️ 마이그레이션 실패했지만 서버는 계속 실행됩니다.")
             
     except Exception as e:
-        logger.error(f"❌ 마이그레이션 실패: {e}")
-        # 마이그레이션 실패해도 서버는 계속 실행
+        logger.error(f"❌ 마이그레이션 실행 오류: {e}")
         logger.warning("⚠️ 마이그레이션 실패했지만 서버는 계속 실행됩니다.")
 
 @app.on_event("startup")
@@ -95,8 +101,8 @@ async def startup_event():
     from sqlalchemy import text
     
     try:
-        # 1️⃣ 먼저 Alembic 마이그레이션 실행
-        await run_migrations()
+        # 1️⃣ 먼저 Alembic 마이그레이션 실행 (동기 호출)
+        run_migrations()
         
         # 2️⃣ 기본 테이블 생성 (마이그레이션으로 처리되지 않는 경우 대비)
         async with engine.begin() as conn:
