@@ -37,8 +37,7 @@ class ChatService:
             "user_id": user_id,
             "title": title,
             "message_count": 0,
-            "total_tokens": 0,
-            "is_archived": False
+            "total_tokens": 0
         }
         
         conversation = Conversation(**conversation_data)
@@ -48,7 +47,7 @@ class ChatService:
         result = await self.db.execute(
             select(Conversation)
             .where(Conversation.user_id == user_id)
-            .where(Conversation.is_archived == False)
+            .where(Conversation.is_deleted == False)  # 삭제된 대화 제외
             .order_by(Conversation.updated_at.desc())
             .limit(limit)
         )
@@ -352,11 +351,23 @@ class ChatService:
             message.extra_info = error_message
             await save_to_db(self.db, message)
     
-    async def archive_conversation(self, conversation_id: int) -> bool:
-        """📁 대화 보관하기"""
+    
+    async def update_conversation_title(self, conversation_id: int, title: str) -> bool:
+        """✏️ 대화 제목 수정하기"""
         conversation = await get_by_id(self.db, Conversation, conversation_id)
-        if conversation:
-            conversation.is_archived = True
+        if conversation and not conversation.is_deleted:
+            conversation.title = title
+            conversation.updated_at = datetime.now()
+            await save_to_db(self.db, conversation)
+            return True
+        return False
+    
+    async def delete_conversation(self, conversation_id: int) -> bool:
+        """🗑️ 대화 삭제하기 (soft delete)"""
+        conversation = await get_by_id(self.db, Conversation, conversation_id)
+        if conversation and not conversation.is_deleted:
+            conversation.is_deleted = True
+            conversation.updated_at = datetime.now()
             await save_to_db(self.db, conversation)
             return True
         return False

@@ -37,7 +37,7 @@ class Conversation(Base):
     total_tokens = Column(Integer, default=0)  # 사용한 토큰 수
     
     # 상태
-    is_archived = Column(Boolean, default=False)  # 보관됨 여부
+    is_deleted = Column(Boolean, default=False)  # 삭제됨 여부 (soft delete)
     
     # 시간
     created_at = Column(DateTime, default=func.now())

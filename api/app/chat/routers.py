@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import ChatRequest
+from .models import ChatRequest, ConversationTitleRequest
 from .services import ChatService
 from ..core.database import get_db
 from ..core.logger import logger
@@ -155,23 +155,63 @@ async def get_conversation_history(
         )
 
 
-@router.post("/conversation/{conversation_id}/archive")
-async def archive_conversation(
+
+
+@router.put("/conversation/{conversation_id}")
+async def update_conversation_title(
     conversation_id: int,
+    title_request: ConversationTitleRequest,
     chat_service: ChatService = Depends(get_chat_service)
 ):
-
+    """
+    ✏️ 대화 제목 수정
+    """
     try:
-        success = await chat_service.archive_conversation(conversation_id)
+        success = await chat_service.update_conversation_title(
+            conversation_id, 
+            title_request.title
+        )
+        
         if success:
-            return {"message": "대화가 보관되었습니다", "conversation_id": conversation_id}
+            return {
+                "message": "대화 제목이 성공적으로 수정되었습니다",
+                "conversation_id": conversation_id,
+                "title": title_request.title
+            }
         else:
             raise HTTPException(status_code=404, detail="대화를 찾을 수 없습니다")
             
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"대화 보관 중 오류: {str(e)}"
+            detail=f"대화 제목 수정 중 오류: {str(e)}"
+        )
+
+
+@router.delete("/conversation/{conversation_id}")
+async def delete_conversation(
+    conversation_id: int,
+    chat_service: ChatService = Depends(get_chat_service)
+):
+    """
+    🗑️ 대화 삭제 (soft delete)
+    """
+    try:
+        success = await chat_service.delete_conversation(conversation_id)
+        
+        if success:
+            return {
+                "message": "대화가 성공적으로 삭제되었습니다",
+                "conversation_id": conversation_id,
+                "deleted": True
+            }
+        else:
+            raise HTTPException(status_code=404, detail="대화를 찾을 수 없습니다")
+            
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"대화 삭제 중 오류: {str(e)}"
         )
 
 

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 
 
@@ -27,3 +27,7 @@ class ChatResponse(BaseModel):
     message_id: Optional[int] = None  # 📝 메시지 ID
     is_streaming: Optional[bool] = False
     citations: Optional[List[Dict[str, str]]] = None
+
+
+class ConversationTitleRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=100, description="대화 제목")
