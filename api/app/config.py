@@ -15,6 +15,9 @@ LITELLM_KEY = os.getenv("LITELLM_KEY", "")
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8000"))
 
+# 🔧 DATABASE 설정 추가 (로컬 개발용)
+DATABASE_URL = os.getenv("DATABASE_URL", None)  # 기본값 None으로 설정
+
 # GPT 모델 설정
 GPT_MODEL = os.getenv("GPT_MODEL", "gpt-4-1106-preview")
 IMAGE_GEN_MODEL = os.getenv("IMAGE_GEN_MODEL", "dall-e-3")

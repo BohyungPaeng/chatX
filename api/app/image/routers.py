@@ -5,8 +5,12 @@ import io
 from PIL import Image
 import json
 
-from .models import ImageAnalysisRequest, ImageAnalysisResponse
+from .models import ImageAnalysisRequest, ImageAnalysisResponse, ImageGenResponse
 from .services import analyze_image, analyze_image_streaming
+
+
+from .services import analyze_image, analyze_image_streaming, generate_image
+from fastapi.responses import StreamingResponse
 
 router = APIRouter()
 
@@ -306,3 +310,38 @@ async def analyze_uploaded_image(
     except Exception as e:
         print(f"Error in analyze_uploaded_image: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+
+@router.post("/image-generation", response_model=ImageGenResponse)
+async def image_generation(
+    filename: str = Form(...),
+    type: str = Form("icon"),
+):
+    """
+    - filename: 업로드된 파일명 (e.g. "mypic.png")
+    - type: "icon" (현재는 아이콘만 지원)
+    """
+    # 1) title은 확장자 제거
+    title = filename.rsplit(".", 1)[0]
+
+    if type != "icon":
+        raise HTTPException(400, detail=f"unsupported type: {type}")
+
+    # 2) 원본 Base64 얻기 (1024×1024)
+    try:
+        raw_b64 = await generate_image(title)
+    except Exception as e:
+        print(f"🔥 Icon generation error: {e}")  # 서버 로그용
+        raise HTTPException(400, detail=f"Icon generation failed: {str(e)}")
+
+    # 3) 디코딩 → PIL → 256×256 리사이즈
+    img = Image.open(io.BytesIO(base64.b64decode(raw_b64)))
+    img256 = img.resize((256, 256), Image.LANCZOS)
+
+    # 4) 메모리 상에 PNG 최적화 저장 → Base64 재인코딩
+    buf = io.BytesIO()
+    img256.save(buf, format="PNG", optimize=True)
+    resized_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    return ImageGenResponse(b64=resized_b64)

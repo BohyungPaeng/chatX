@@ -20,3 +20,7 @@ class ImageAnalysisResponse(BaseModel):
     response: str
     model: str
     usage: dict
+
+""" 이미지 생성 모델 API의 프론트 반환서식. 초기버전은 b64 압축하여"""
+class ImageGenResponse(BaseModel):
+    b64: str

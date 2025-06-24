@@ -308,3 +308,60 @@ async def query_file(request: FileQueryRequest) -> FileQueryResponse:
             response=f"파일 질의 중 오류가 발생했습니다: {str(e)}",
             error=str(e)
         )
+    
+
+async def chunk_pdf_document(filename: str, debug_mode: bool = True):
+    """
+    PDF 문서 청킹 - 전체 문서 통합 방식
+    
+    Args:
+        filename: PDF 파일명
+        debug_mode: 디버깅 모드 (3가지 방식 비교)
+    
+    Returns:
+        List[Chunk]: 청킹 결과 (cosine)
+    """
+    try:
+        from .cache_manager import pdf_cache_manager
+        from ..retriever.doc_chunker import DocumentChunker
+        
+        # 캐시 로드
+        cache_data = pdf_cache_manager.load(filename)
+        if not cache_data:
+            raise ValueError(f"PDF 캐시를 찾을 수 없습니다: {filename}")
+        
+        print(f"🔍 DEBUG: 원본 {len(cache_data.get('page_texts', []))} 페이지 감지")
+        
+        # chunker 생성
+        chunker = DocumentChunker(chunking_method='cosine')
+        chunks = chunker.chunk_document(cache_data, filename)
+        
+        if debug_mode:
+            # 3가지 방식 비교 (analyze만 사용)
+            methods = ['cosine', 'jaccard', 'simple']
+            chunk_counts = []
+            
+            for method in methods:
+                chunker.chunking_method = method
+                if method == 'cosine':
+                    test_chunks = chunks  # 이미 만든 것 재사용
+                else:
+                    test_chunks = chunker.chunk_document(cache_data, filename)
+                
+                chunker._analyze_chunks(test_chunks, method)
+                chunk_counts.append(len(test_chunks))
+            
+            print(f"\n📊 === 3가지 방식 비교 ===")
+            print(f"COSINE: {chunk_counts[0]}개 (선택됨)")
+            print(f"JACCARD: {chunk_counts[1]}개")
+            print(f"SIMPLE: {chunk_counts[2]}개")
+        
+        print(f"🔍 DEBUG: 총 {len(chunks)}개 청크 생성")
+        print(f"Successfully chunked {filename}: {len(chunks)} chunks created (cosine)")
+        return chunks
+        
+    except Exception as e:
+        print(f"Error chunking PDF document {filename}: {str(e)}")
+        raise Exception(f"PDF 청킹 중 오류: {str(e)}")
+    
+    

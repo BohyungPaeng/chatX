@@ -11,8 +11,8 @@ import os
 from typing import List, Union, Any, Tuple
 from dataclasses import dataclass
 from .doc_chunker import Chunk
-from .cache_manager import pdf_cache_manager
-from .config import FLAG_LIGHTWEIGHT
+from ..file.cache_manager import pdf_cache_manager
+from ..config import FLAG_LIGHTWEIGHT
 
 @dataclass
 class SearchResult:
@@ -20,7 +20,6 @@ class SearchResult:
     score: float
     citation: str
 
-_global_embedding_models = {}
 class FaissIndex:
     """FAISS 기반 벡터 검색 인덱스"""
     
@@ -35,14 +34,9 @@ class FaissIndex:
         self.index = None
         self.chunks = []
         self.embedding_dim = None
+        self.model_name = embedding_model
         
     def _load_embedding_model(self, model_input: str) -> Any:
-        # """지연 로딩: 실제 필요할 때만 모델 로드"""
-        # global _global_embedding_models
-        
-        # if self.model_name in _global_embedding_models:
-        #     print(f"🔄 전역 캐시에서 모델 재사용: {self.model_name}")
-        #     return _global_embedding_models[self.model_name]
 
         if not FLAG_LIGHTWEIGHT:
             # 1순위: 캐시, 2순위: 실패시 온라인 시도
@@ -53,7 +47,8 @@ class FaissIndex:
                     model = SentenceTransformer(model_input, local_files_only=True, token=False)
                     print("✅ Cached Model loaded successfully")
                     return model
-                except:
+                except Exception as e:
+                    print(f"❌ (local) Cached Model loading failed: {e}")
                     print("🌐 Huggingface On-line Download 시도...")
                     model = SentenceTransformer(model_input, token=False)
                     print("✅ On-line Model loaded successfully")
@@ -64,7 +59,7 @@ class FaissIndex:
         else:
             # 3순위: 경량 임베더 (stage 브랜치 전용)
             try:
-                from .tools.lightweight_embedder import LightweightEmbedder
+                from ..tools.lightweight_embedder import LightweightEmbedder
                 embedder = LightweightEmbedder()
                 if embedder.load():
                     print("✅ 경량 임베더 사용")

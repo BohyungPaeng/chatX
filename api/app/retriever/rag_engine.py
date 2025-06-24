@@ -5,12 +5,12 @@ from typing import List, Dict, Set, Tuple
 from dataclasses import dataclass
 from collections import Counter
 from .doc_chunker import Chunk
-from .config import PROMPT_BANK
+from ..config import PROMPT_BANK
 prompts = PROMPT_BANK.get("rag_basic", {})
 
 from .faiss_index import create_faiss_index_from_cache, SearchResult
-
-
+from ..utils import detect_summary_request
+from ..file.cache_manager import pdf_cache_manager, build_page_content_map, get_combined_text_from_cache
 @dataclass
 class SearchResult:
     chunk: Chunk
@@ -55,7 +55,6 @@ class SearchIndex:
     
     def _build_page_map(self):
         """페이지별 전체 내용 매핑 구축"""
-        from .cache_manager import pdf_cache_manager
         
         if self.chunks:
             # 청크 ID에서 파일명 올바르게 추출
@@ -231,7 +230,6 @@ class CitationFormatter:
     @staticmethod
     def create_fallback_prompt(filename: str, query: str) -> str:
         """검색 결과가 없을 때 전체 문서용 프롬프트"""
-        from .routers import get_combined_text_from_cache
         full_text = get_combined_text_from_cache(filename)
         return f"""당신은 PDF 문서 분석 전문가입니다.
 문서명: {filename}
@@ -300,18 +298,6 @@ def search_and_format(search_index: SearchIndex, query: str, filename: str, top_
     """기존 함수 (호환성 유지)"""
     return search_and_generate_system_message(search_index, query, filename, use_page_context=False, top_k=top_k)
 
-
-def get_combined_text_from_cache_safe(filename: str) -> str:
-    """안전한 전체 문서 텍스트 가져오기"""
-    try:
-        from .routers import get_combined_text_from_cache
-        return get_combined_text_from_cache(filename)
-    except Exception as e:
-        print(f"Error getting combined text: {e}")
-        return ""
-
-from .utils import detect_summary_request
-
 def extract_specific_pages_content(filename: str, page_numbers: list[int]) -> str:
     """
     캐시에서 특정 페이지들 내용 추출 (복수 페이지 지원)
@@ -325,7 +311,6 @@ def extract_specific_pages_content(filename: str, page_numbers: list[int]) -> st
     """
     if not page_numbers:
         return "요청된 페이지가 없습니다."
-    from .cache_manager import build_page_content_map
     page_content_map = build_page_content_map(filename)
     
     if not page_content_map:
@@ -373,7 +358,7 @@ def search_with_faiss_engine(filename: str, query: str, top_k: int = 5) -> Tuple
         # 2. 전체 문서 모드
         if is_detected_full_document:
             print(f"📄 전체 문서 모드: {query[:50]}...")
-            full_text = get_combined_text_from_cache_safe(filename)
+            full_text = get_combined_text_from_cache(filename)
             
             template = prompts.get("full_document_summary", 
                 "당신은 PDF 문서 분석 전문가입니다.\n📄 전체 문서 내용:\n{full_text}")
@@ -409,7 +394,7 @@ def search_with_faiss_engine(filename: str, query: str, top_k: int = 5) -> Tuple
         
         if not faiss_index:
             print("❌ FAISS 인덱스 생성 실패, 전체 문서 모드로 폴백")
-            full_text = get_combined_text_from_cache_safe(filename)
+            full_text = get_combined_text_from_cache(filename)
             
             template = prompts.get("no_search_results",
                 "검색 결과가 없어 전체 문서를 참조합니다.\n전체 문서 내용:\n{full_text}")
@@ -422,7 +407,7 @@ def search_with_faiss_engine(filename: str, query: str, top_k: int = 5) -> Tuple
         
         if not search_results:
             print("⚠️ 검색 결과 없음, 전체 문서 모드로 폴백")
-            full_text = get_combined_text_from_cache_safe(filename)
+            full_text = get_combined_text_from_cache(filename)
             
             template = prompts.get("no_search_results",
                 "검색 결과가 없어 전체 문서를 참조합니다.\n전체 문서 내용:\n{full_text}")
@@ -451,7 +436,7 @@ def search_with_faiss_engine(filename: str, query: str, top_k: int = 5) -> Tuple
         traceback.print_exc()
         
         # 폴백: 전체 문서 모드
-        full_text = get_combined_text_from_cache_safe(filename)
+        full_text = get_combined_text_from_cache(filename)
         
         template = prompts.get("search_fallback",
             "검색 중 오류 발생하여 전체 문서를 참조합니다.\n오류: {error}\n전체 문서 내용:\n{full_text}")

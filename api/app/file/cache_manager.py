@@ -208,7 +208,28 @@ def build_page_content_map(filename: str) -> dict[int, str]:
     
     return page_content_map
 
-
+def get_combined_text_from_cache(filename: str) -> str:
+    """
+    GLOBAL_PDF_CACHE에서 메타데이터를 가져와서 combined_text 생성
+    /chat-with-pdf에서 필요할 때 호출
+    """
+    cache_data = pdf_cache_manager.load(filename)
+    if not cache_data:
+        return ""
+    
+    # 기존 문자열 형태
+    if isinstance(cache_data, str):
+        return cache_data
+    
+    # 메타데이터 형태
+    if isinstance(cache_data, dict) and 'page_texts' in cache_data:
+        page_texts = cache_data['page_texts']
+        combined_text = "\n\n".join(page_texts)
+        # 마크다운 정리 (## 📄 -> === 변환)
+        cleaned_text = combined_text.replace("## 📄 페이지", "=== 페이지").replace("---", "")
+        return cleaned_text.strip()
+    
+    return ""
 
 if __name__ == "__main__":
     map = build_page_content_map("Guide to Taiwan's semiconductor industry 3.pdf")

@@ -2,22 +2,8 @@ import aiohttp
 import json
 import asyncio
 from typing import List, Dict, Optional, Any, Union, AsyncGenerator
-from .config import LITELLM_URL, LITELLM_KEY
+from ..config import LITELLM_URL, LITELLM_KEY
 
-# import requests
-# requests의 경고 메시지 비활성화
-# from requests.packages.urllib3.exceptions import InsecureRequestWarning
-# requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
-
-# Django 환경에서 사용할 경우를 위한 주석 처리된 코드
-# import environ
-# env = environ.Env(DEBUG=(bool, False))
-# 
-# import os
-# if not os.environ.get('DJANGO_SETTINGS_MODULE'):
-#     # Django 외부에서 실행 중인 경우에만 .env 파일 로드
-#     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-#     env.read_env(os.path.join(project_root, '.env'))
 
 class AsyncPwCGPTModel:
     """비동기(async) 방식으로 GPT 모델을 호출하는 클래스."""

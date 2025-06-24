@@ -359,52 +359,41 @@ Answer: Correct or Incorrect
                     # with tracer.start_as_current_span("retrieve") as chunk_span:
                     # 2) span 생성 (start_time 지정)
                     with tracer.start_as_current_span(
-                        method,
-                        start_time=start_ns,
+                        "retrieve",
+                        start_time=start,
                         attributes={
-                            SpanAttributes.OPENINFERENCE_SPAN_KIND: OpenInferenceSpanKindValues.RETRIEVER.value,
-                            SpanAttributes.INPUT_VALUE:             f"{query} | Rank #{i+1}"
+                            SpanAttributes.OPENINFERENCE_SPAN_KIND:
+                                OpenInferenceSpanKindValues.RETRIEVER.value,
+                            SpanAttributes.INPUT_VALUE: query,
+                            "retrieval.latency_ms": search_time_ms
                         }
-                    ) as chunk_span:
-                        # 3) 출력값 (문서 내용)
-                        chunk_span.set_attribute(SpanAttributes.OUTPUT_VALUE, result.chunk.content)
+                    ) as span:
 
-                        # 4) 문서 점수 (semantic key 사용)
-                        chunk_span.set_attribute(
-                            DocumentAttributes.DOCUMENT_SCORE, 
-                            float(result.score)
+                        #
+                        # 1) Phoenix 가 파싱할 docs 리스트
+                        #
+                        phoenix_docs = []
+                        for rank, r in enumerate(search_results, 1):
+                            d = {
+                                DocumentAttributes.DOCUMENT_ID:      f"chunk-{rank}",
+                                DocumentAttributes.DOCUMENT_CONTENT: r.chunk.content[:800],
+                                DocumentAttributes.DOCUMENT_SCORE:   float(r.score),
+                                DocumentAttributes.DOCUMENT_METADATA: {
+                                    "page": getattr(r.chunk, "page_number", None),
+                                    "rank": rank
+                                }
+                            }
+                            phoenix_docs.append(
+                                d if key.endswith(".documents") else json.dumps(d)
+                            )
+
+                        span.set_attribute(key, phoenix_docs)   # ★ 핵심
+
+                        # 2) 출력 요약
+                        span.set_attribute(
+                            SpanAttributes.OUTPUT_VALUE, search_results[0].chunk.content[:200]
                         )
-
-                        # 5) 검색 시간(ms) 커스텀 속성
-                        chunk_span.set_attribute(
-                            "retrieval.search_time_ms", 
-                            search_time_ms
-                        )
-
-                        # 6) 세션·메타데이터
-                        chunk_span.set_attribute("session.session_id", session_id)
-                        chunk_span.set_attribute("metadata.filename", filename)
-                        chunk_span.set_attribute("metadata.chunk_rank", i + 1)
-                        # chunk_span.set_attribute("chunk_rank", i + 1) #커스텀/미등록 키를 “Metadata” 카테고리로 어차피 자동 분류합니다
-                        chunk_span.set_attribute("metadata.query_number", query_num)
-
-                        # 7) BBox 예시
-                        chunk_span.set_attribute(
-                            "metadata.bbox",
-                            str([0.6172452489318663, 0.9592069953131686, 
-                                0.9021840911883696, 0.9693693880041185])
-                        )
-
-                        # 8) Relevance 평가
-                        rel_score = float(result.score)
-                        rel_label = ("high" if rel_score > 0.7 
-                                    else "medium" if rel_score > 0.4 
-                                    else "low")
-                        chunk_span.set_attribute("evaluation.relevance.score", rel_score)
-                        chunk_span.set_attribute("evaluation.relevance.label", rel_label)
-
-                    # 9) span 강제 종료 (end_time 지정)
-                    chunk_span.end(end_time=end_ns)
+                    span.end(end_time=end)
                 
                 print(f"📊 Search Results 완료: Q{query_num}, {len(search_results)}개 결과")
                 return session_id
