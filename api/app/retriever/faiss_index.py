@@ -23,18 +23,23 @@ class SearchResult:
 class FaissIndex:
     """FAISS 기반 벡터 검색 인덱스"""
     
-    def __init__(self, embedding_model: Union[str, Any] = "intfloat/multilingual-e5-base"):
+    def __init__(self, embedding_model: Union[str, Any]):
         """
         Args:
             embedding_model: 모델명(str) 또는 모델 객체
                 - str: HuggingFace SentenceTransformer 모델명
                 - object: 이미 로드된 임베딩 모델 객체
         """
-        self.embedding_model = self._load_embedding_model(embedding_model)
         self.index = None
         self.chunks = []
         self.embedding_dim = None
         self.model_name = embedding_model
+        if self.model_name.startswith("azure."):
+            self.embedding_model = None
+            self.embedding_dim = 1024
+        else:
+            self.embedding_model = self._load_embedding_model(embedding_model)
+            self.embedding_dim = None
         
     def _load_embedding_model(self, model_input: str) -> Any:
 
@@ -86,6 +91,37 @@ class FaissIndex:
         embedding = self.embedding_model.encode(prefixed_text)
         return np.array(embedding, dtype=np.float32)
     
+    def _get_embedding_azure(self, text_inputs : list):
+        import requests
+        from ..config import LITELLM_KEY,LITELLM_URL
+        headers = {
+            "User-Agent": "curl/8.9.1",
+            "accept": "application/json",
+            "accept-encoding": "gzip, deflate, br",
+            "Authorization": "Bearer " + LITELLM_KEY,
+            "Content-Type": "application/json", 
+            "Connection": "keep-alive",  
+            "x-request-type": "sync",
+        }
+        body = {
+            "input": text_inputs,
+            "model": self.model_name,
+            "encoding_format": "float",
+            "dimensions": self.embedding_dim
+        }
+        response = requests.post(
+            LITELLM_URL + "/embeddings", 
+            # params=params, 
+            headers=headers, 
+            json=body, 
+            verify=False,
+            allow_redirects=True
+        )
+
+        embeddings_raw = response.json()['data']
+        embeddings = np.array([item['embedding'] for item in embeddings_raw], dtype=np.float32) 
+        return embeddings
+    
     def build_from_chunks(self, chunks: List[Chunk], filename: str = None) -> bool:
         """
         Chunk 리스트로부터 FAISS 인덱스 구축
@@ -106,23 +142,27 @@ class FaissIndex:
             self.chunks = chunks
             
             # 임베딩 생성
-            embeddings = []
-            for i, chunk in enumerate(chunks):
-                if not chunk.content.strip():
-                    continue
-                
-                embedding = self._get_embedding_with_instruction(chunk.content, is_query=False)
-                embeddings.append(embedding)
-                
-                if (i + 1) % 10 == 0:
-                    print(f"📦 Processed {i + 1}/{len(chunks)} chunks")
+
+            if self.embedding_model is None:
+                embedding_matrix = self._get_embedding_azure(text_inputs=[chunk.content for chunk in chunks if chunk.content.strip()])
+            else: 
+                embeddings = []
+                for i, chunk in enumerate(chunks):
+                    if not chunk.content.strip():
+                        continue
+                    
+                    embedding = self._get_embedding_with_instruction(chunk.content, is_query=False)
+                    embeddings.append(embedding)
+                    
+                    if (i + 1) % 10 == 0:
+                        print(f"📦 Processed {i + 1}/{len(chunks)} chunks")
             
-            if not embeddings:
-                print("❌ No valid embeddings generated")
-                return False
-            
-            # 임베딩 배열 생성
-            embedding_matrix = np.array(embeddings, dtype=np.float32)
+                if not embeddings:
+                    print("❌ No valid embeddings generated")
+                    return False
+                
+                # 임베딩 배열 생성
+                embedding_matrix = np.array(embeddings, dtype=np.float32)
             self.embedding_dim = embedding_matrix.shape[1]
             
             print(f"📐 Embedding dimension: {self.embedding_dim}")
@@ -167,8 +207,12 @@ class FaissIndex:
                 return []
             
             # 쿼리 임베딩 생성
-            query_embedding = self._get_embedding_with_instruction(query, is_query=True)
-            query_vector = np.array([query_embedding], dtype=np.float32)
+            
+            if self.embedding_model is None:
+                query_vector = self._get_embedding_azure(text_inputs=query)
+            else:
+                query_embedding = self._get_embedding_with_instruction(query, is_query=True)
+                query_vector = np.array([query_embedding], dtype=np.float32)
             
             # L2 정규화
             faiss.normalize_L2(query_vector)

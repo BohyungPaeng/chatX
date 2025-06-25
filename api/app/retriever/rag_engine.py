@@ -390,7 +390,7 @@ def search_with_faiss_engine(filename: str, query: str, top_k: int = 5) -> Tuple
         
         # 3. FAISS 검색 모드
         print(f"🔍 FAISS 검색 모드: {query[:50]}...")
-        faiss_index = create_faiss_index_from_cache(filename)
+        faiss_index = create_faiss_index_from_cache(filename, model_name= "azure.text-embedding-3-large")
         
         if not faiss_index:
             print("❌ FAISS 인덱스 생성 실패, 전체 문서 모드로 폴백")
